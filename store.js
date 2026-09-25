@@ -19,6 +19,8 @@ export function defaultState() {
     favorites: [...DEFAULT_FAVORITES],
     // MAD 는 트래블로그 미지원 → USD 지갑 결제. Chan 실측 "USD 1 = 9.2 MAD" 를 기본 고정값으로 둠(설정에서 수정 가능)
     manual: { krw: {}, usdCross: { ...FIXED_CROSS } },
+    // 하나머니 앱 화면에서 본 환율(1단위당 원화)과 입력한 날짜. 더 새 고시가 나오면 자동으로 안 씀
+    travlog: { rates: {}, at: null },
     migrated: { mad92: true, names2: true, names4: true },
     imports: [],
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
@@ -54,6 +56,7 @@ export function loadState() {
 export function mergeState(base, saved) {
   const out = { ...base, ...saved };
   out.manual = { krw: { ...(saved.manual?.krw || {}) }, usdCross: { ...(saved.manual?.usdCross || {}) } };
+  out.travlog = { rates: { ...(saved.travlog?.rates || {}) }, at: saved.travlog?.at || null };
   out.migrated = { ...(saved.migrated || {}) };
   // 2026-09-25 이전 저장본: MAD 9.2 고정값을 한 번만 채움
   if (!out.migrated.mad92) {

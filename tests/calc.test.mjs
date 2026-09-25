@@ -156,3 +156,20 @@ test('정산: 개인 몫(forWho) — 남이 대신 낸 개인 지출은 그 사�
   assert.deepEqual([s.transfers[0].from, s.transfers[0].to, s.transfers[0].krw], ['서정', '주찬', 15]);
   assert.throws(() => settle([{ payer: '주찬', amount: 1, code: 'KRW', forWho: '누구' }], people, ctx), RangeError);
 });
+
+test('트래블로그 앱 값(manual.travlog)은 고시보다 우선, 수동 원화보다는 뒤. USD 값을 넣으면 USD 교차 통화도 따라감', () => {
+  const c = { rates, manual: { usdCross: { MAD: 9.2 }, travlog: { USD: 1359, CAD: 960.73 } } };
+  assert.equal(krwPerUnit('USD', c).rate, 1359);
+  assert.equal(krwPerUnit('USD', c).source, 'travlog');
+  assert.equal(krwPerUnit('CAD', c).rate, 960.73);
+  // MAD = 트래블로그 USD / 9.2
+  assert.ok(Math.abs(krwPerUnit('MAD', c).rate - 1359 / 9.2) < 1e-9);
+  // 수동 원화가 있으면 그게 먼저
+  const c2 = { rates, manual: { krw: { USD: 1400 }, travlog: { USD: 1359 } } };
+  assert.equal(krwPerUnit('USD', c2).rate, 1400);
+  // 트래블로그 값이 없는 통화는 고시
+  assert.equal(krwPerUnit('JPY', c).source, 'hana');
+  // 0 이나 음수는 무시
+  const c3 = { rates, manual: { travlog: { USD: 0 } } };
+  assert.notEqual(krwPerUnit('USD', c3).source, 'travlog');
+});

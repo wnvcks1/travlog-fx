@@ -2,7 +2,8 @@
  * 순수 계산 함수. 브라우저(app.js)와 node(tests, scripts) 양쪽에서 import.
  * 환율 컨텍스트 ctx = { rates, manual }
  *   rates:  rates.json 형식 { source, asof, rates:{USD:{mid,ttb,tts,unit}}, usdCross:{MAD:9.2} }
- *   manual: { krw:{MAD:141.3}, usdCross:{MAD:9.2} }  사용자가 직접 넣은 값. 항상 우선.
+ *   manual: { krw:{MAD:141.3}, usdCross:{MAD:9.2}, travlog:{USD:1359} }  사용자가 직접 넣은 값. 항상 우선.
+ *           travlog 는 하나머니 앱 화면에 보이는 "USD 1 = 1,359원" 같은 값(1단위당 원화).
  * mid 는 unit 단위당 원화(매매기준율 = 트래블로그 충전가), ttb 는 송금 받으실 때(환급가).
  */
 import { currencyInfo } from './currencies.js';
@@ -29,7 +30,16 @@ function assertAmount(amount, label = 'amount') {
 }
 
 /**
- * 통화 1단위당 원화와 그 출처를 돌려줌. 우선순위: 수동 원화 > 수동 USD 교차 > 고시환율 > USD 교차.
+ * 양수 유한값이면 그 값, 아니면 undefined.
+ * @param {unknown} v
+ * @returns {number|undefined}
+ */
+function pos(v) { return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined; }
+
+/**
+ * 통화 1단위당 원화와 그 출처를 돌려줌.
+ * 우선순위: 수동 원화 > 수동 USD 교차 > 트래블로그 앱에서 본 값(manual.travlog) > 고시환율 > USD 교차.
+ * USD 교차에 쓰는 달러 환율도 같은 우선순위로 정함(트래블로그 앱 USD 값을 넣으면 MAD 같은 미지원 통화도 따라감).
  * @param {string} code
  * @param {{rates?:object, manual?:object}} ctx
  * @returns {{rate:number, source:string, unit:number, mid?:number, ttb?:number}}
@@ -38,13 +48,17 @@ export function krwPerUnit(code, ctx = {}) {
   if (code === 'KRW') return { rate: 1, source: 'fixed', unit: 1 };
   const rates = ctx.rates || {};
   const manual = ctx.manual || {};
-  const usdMid = rates.rates?.USD ? rates.rates.USD.mid / (rates.rates.USD.unit || 1) : manual.krw?.USD;
+  const usdMid = pos(manual.krw?.USD) ?? pos(manual.travlog?.USD)
+    ?? (rates.rates?.USD ? rates.rates.USD.mid / (rates.rates.USD.unit || 1) : undefined);
 
-  if (manual.krw && Number.isFinite(manual.krw[code]) && manual.krw[code] > 0) {
+  if (pos(manual.krw?.[code])) {
     return { rate: manual.krw[code], source: 'manual', unit: 1 };
   }
-  if (manual.usdCross && Number.isFinite(manual.usdCross[code]) && manual.usdCross[code] > 0 && usdMid) {
+  if (pos(manual.usdCross?.[code]) && usdMid) {
     return { rate: usdMid / manual.usdCross[code], source: 'manual-cross', unit: 1 };
+  }
+  if (pos(manual.travlog?.[code])) {
+    return { rate: manual.travlog[code], source: 'travlog', unit: 1 };
   }
   const q = rates.rates?.[code];
   if (q && Number.isFinite(q.mid) && q.mid > 0) {

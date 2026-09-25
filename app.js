@@ -45,8 +45,29 @@ const titleEl = /** @type {HTMLElement} */ (document.getElementById('title'));
 const badgeEl = /** @type {HTMLElement} */ (document.getElementById('rate-badge'));
 const toastEl = /** @type {HTMLElement} */ (document.getElementById('toast'));
 
+/**
+ * 트래블로그 앱 값이 아직 유효한지. 입력한 날보다 새 고시일이 나오면 만료(그날 환율은 새 고시를 따름).
+ * @returns {boolean}
+ */
+function travlogActive() {
+  const t = state.travlog;
+  if (!t || !t.at || !Object.keys(t.rates || {}).length) return false;
+  const newer = rates?.baseDate && rates.baseDate > t.at;
+  const tooOld = Date.now() - Date.parse(t.at) > 7 * 86400e3;
+  return !newer && !tooOld;
+}
+
+/** @returns {string} YYYY-MM-DD (폰 시간 기준) */
+function todayStr() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 /** @returns {{rates:object|null, manual:object}} */
-function ctx() { return { rates, manual: state.manual }; }
+function ctx() {
+  return { rates, manual: { ...state.manual, travlog: travlogActive() ? state.travlog.rates : {} } };
+}
 function persist() { if (!saveState(state)) logger.warn('localStorage 저장 실패'); }
 
 /**
@@ -207,7 +228,8 @@ function renderFx() {
     const per = (c) => { const r = krwPerUnit(c, ctx()); const u = r.unit > 1 ? r.unit : 1; return `${u} ${c} = ${fmt(r.rate * u, r.rate * u < 10 ? 3 : 2)}원`; };
     const crossLabel = (c) => (state.manual.usdCross?.[c] > 0 ? '고정' : '자동');
     const usdAmt = krw / usd.rate;
-    if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b> · ${badgeHtml()}`);
+    const tvUsd = krwPerUnit('USD', ctx()).source === 'travlog';
+    if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b> · ${src.source === 'travlog' || (src.source === 'manual-cross' && tvUsd) ? `<span class="ok">트래블로그 앱 값 (${esc((state.travlog.at || '').slice(5))} 입력)</span>` : badgeHtml()}`);
     if (unsupported(code)) {
       // 미지원 통화는 USD 지갑에서 빠짐: 교차 → USD 금액 → 원화, 단계마다 한 줄
       lines.push(`USD 1 = ${fmt(crossOf(code) || 0, 2)} ${esc(code)} (${crossLabel(code)}) · USD 지갑에서 결제`);
@@ -546,6 +568,34 @@ function saveDraft() {
 
 /* ───────────── 설정 탭 ───────────── */
 
+/**
+ * 트래블로그 앱 환율 입력 행. USD·CAD·EUR·JPY + 여행 통화·즐겨찾기 중 트래블로그 지원 통화.
+ * @returns {string}
+ */
+function travlogRows() {
+  const codes = [...new Set(['USD', 'CAD', 'EUR', 'JPY', activeTrip().code, ...state.favorites])]
+    .filter((c) => c !== 'KRW' && currencyInfo(c) && currencyInfo(c).travlog !== 'none');
+  return codes.map((c) => {
+    const unit = currencyInfo(c).unit || 1;
+    let posted = '';
+    try {
+      const q = rates?.rates?.[c];
+      if (q) posted = `고시 ${fmt(q.mid, 2)}`;
+    } catch { posted = ''; }
+    const v = state.travlog.rates[c];
+    const diff = v && rates?.rates?.[c] ? v * unit - rates.rates[c].mid : null;
+    return `<div class="row"><label style="flex:0 0 96px">${esc(c)} ${unit > 1 ? unit : 1} =</label><input data-action="travlog-val" data-code="${esc(c)}" value="${v ? esc(fmt(v * unit, 2).replace(/,/g, '')) : ''}" inputmode="decimal" placeholder="${esc(posted.replace('고시 ', '').replace(/,/g, ''))}" autocomplete="off"><span class="muted" style="flex:0 0 118px;font-size:.78rem;text-align:right">${esc(posted)}${diff !== null ? `<br>${diff >= 0 ? '+' : ''}${fmt(diff, 2)}` : ''}</span></div>`;
+  }).join('');
+}
+
+/** @returns {string} */
+function travlogStatus() {
+  const t = state.travlog;
+  if (!t.at || !Object.keys(t.rates).length) return '아직 없음. 하나머니 앱 → 하나머니 탭에서 보이는 환율을 넣을 것.';
+  if (travlogActive()) return `${esc(t.at)} 입력값 사용 중. 고시일 ${esc(rates?.baseDate || '—')} 보다 새 고시가 나오면 자동 해제.`;
+  return `<span class="warn">${esc(t.at)} 입력값은 만료됨(고시일 ${esc(rates?.baseDate || '—')} 이 더 새로움). 다시 보고 넣을 것.</span>`;
+}
+
 /** @returns {string} */
 function renderSettings() {
   const people = state.people.map((p, i) => `<div class="row"><label>사람 ${i + 1}</label><input data-action="set-person" data-i="${i}" value="${esc(p)}"><input data-action="set-initial" data-i="${i}" value="${esc(state.initials[i] || '')}" style="flex:0 0 56px;text-align:center" aria-label="메모 초성" placeholder="초성"><input data-action="set-ratio" data-i="${i}" value="${esc(state.ratio[i])}" inputmode="decimal" style="flex:0 0 60px" aria-label="분담 비율"></div>`).join('');
@@ -574,6 +624,11 @@ function renderSettings() {
   <section class="card"><h2>사람 · 메모 초성 · 분담 비율</h2>${people}<p class="hint">이름을 바꾸면 기존 내역의 이름도 같이 바뀜. 가운데는 노션 메모 줄 맨 앞 글자(ㅈ·ㅅ), 오른쪽은 분담 비율(1:1 이 균등).</p></section>
   <section class="card"><h2>여행</h2>${trips}<div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
   <section class="card"><h2>즐겨찾기 통화</h2><div class="chips" style="flex-wrap:wrap;overflow:visible">${favChips}</div></section>
+  <section class="card"><h2>트래블로그 앱 환율 맞추기</h2>
+    <p class="hint" style="margin:0 0 6px">하나머니 화면의 "USD 1 = 1,359원" 값을 그대로 넣으면 앱 전체(정산 내역 포함)가 그 환율로 계산됨. 더 새 고시가 나오면 자동으로 해제.</p>
+    ${travlogRows()}
+    <div class="actions"><button class="btn primary" data-action="travlog-save">저장</button>${Object.keys(state.travlog.rates).length ? '<button class="btn sm" data-action="travlog-clear">지우기</button>' : ''}</div>
+    <div class="muted" style="margin-top:6px">${travlogStatus()}</div></section>
   <section class="card"><h2>수동 환율 (항상 우선)</h2>${manualRows}
     <div class="row" style="margin-top:8px"><select id="m-code" style="flex:0 0 40%">${currencyOptions(fx.code)}</select>
       <select id="m-kind" style="flex:0 0 30%"><option value="usdCross">USD 1달러 = ? 현지</option><option value="krw">현지 1 = ? 원</option></select>
@@ -761,6 +816,31 @@ async function onClick(el) {
       state.manual[kind][code] = v;
       const n = resnapshotItems(code);
       persist(); render(); toast(`${code} 수동 환율 저장${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
+    }
+    case 'travlog-save': {
+      const inputs = [...document.querySelectorAll('[data-action="travlog-val"]')];
+      const next = {};
+      for (const inp of inputs) {
+        const code = /** @type {HTMLInputElement} */ (inp).dataset.code;
+        const v = parseAmount(/** @type {HTMLInputElement} */ (inp).value);
+        if (v > 0) next[code] = v / (currencyInfo(code).unit || 1);
+      }
+      if (!Object.keys(next).length) { toast('값을 하나 이상 넣어 줘'); return; }
+      state.travlog = { rates: next, at: todayStr() };
+      let n = 0;
+      const codes = new Set(Object.keys(next));
+      // USD 가 바뀌면 USD 교차로 계산되는 통화(MAD 등)도 같이
+      if (codes.has('USD')) for (const t of state.trips) for (const it of t.items) if (it.source === 'cross' || it.source === 'manual-cross') codes.add(it.code);
+      for (const c of codes) n += resnapshotItems(c);
+      persist(); render(); toast(`트래블로그 환율 저장${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
+    }
+    case 'travlog-clear': {
+      const codes = new Set(Object.keys(state.travlog.rates));
+      for (const t of state.trips) for (const it of t.items) if (it.source === 'travlog' || it.source === 'cross' || it.source === 'manual-cross') codes.add(it.code);
+      state.travlog = { rates: {}, at: null };
+      let n = 0;
+      for (const c of codes) n += resnapshotItems(c);
+      persist(); render(); toast(`지움${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
     }
     case 'manual-del': {
       delete state.manual[d.kind][d.code];

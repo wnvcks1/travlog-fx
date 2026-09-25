@@ -167,5 +167,5 @@ export async function loadRates(opts = {}) {
  * @returns {string}
  */
 export function sourceLabel(s) {
-  return { hana: '하나은행', kb: 'KB국민', erapi: 'er-api', frankfurter: 'ECB', sample: '샘플', manual: '수동', 'manual-cross': '수동 교차', cross: 'USD 교차', fixed: '' }[s] || (s || '없음');
+  return { hana: '하나은행', kb: 'KB국민', erapi: 'er-api', frankfurter: 'ECB', sample: '샘플', manual: '수동', 'manual-cross': '수동 교차', travlog: '트래블로그 앱', cross: 'USD 교차', fixed: '' }[s] || (s || '없음');
 }
