@@ -35,7 +35,6 @@ jobs:
           mkdir -p site
           cp -r index.html app.js calc.js rates.js store.js currencies.js manifest.webmanifest sw.js icons data site/
           sed -i "s/__BUILD__/${GITHUB_RUN_NUMBER}/g" site/sw.js site/app.js
-          sed -i "s/__BUILD__/${GITHUB_RUN_NUMBER}/g" site/sw.js site/app.js
           head -c 300 site/data/rates.json; echo
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
