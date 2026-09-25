@@ -272,6 +272,18 @@ function renderFx() {
 /* ───────────── 정산 탭 ───────────── */
 
 /**
+ * 정산 내역에 보여 줄 낸 금액. ceilDisplay 통화(MAD)는 소수점 올림 정수(97.6 → 98). 표시 전용, 계산은 원래 값.
+ * @param {number} amount
+ * @param {string} code
+ * @returns {string}
+ */
+function ledgerAmount(amount, code) {
+  const i = currencyInfo(code);
+  if (i.ceilDisplay) return fmt(Math.ceil(amount - 1e-9));
+  return fmt(amount, i.dec);
+}
+
+/**
  * 항목의 현재 CAD 환산(스냅샷 원화 ÷ 현재 CAD).
  * @param {number} krw
  * @returns {string}
@@ -439,7 +451,7 @@ function renderSettle() {
     const i = currencyInfo(it.code);
     const sub = [it.forWho ? `<b>${esc(it.forWho)} 개인</b>` : '', it.note ? esc(it.note) : ''].filter(Boolean).join(' · ');
     // 메인은 실제로 낸 통화·금액(노션 메모 그대로). 원화·캐달은 환산값이라 작게
-    const main = it.code === 'KRW' ? `${fmt(it.amount)}원` : `${fmt(it.amount, i.dec)} ${esc(it.code)}`;
+    const main = it.code === 'KRW' ? `${fmt(it.amount)}원` : `${ledgerAmount(it.amount, it.code)} ${esc(it.code)}`;
     const conv = it.code === 'KRW' ? `${cadOf(it.krw)} 캐달` : `${fmt(it.krw)}원 · ${cadOf(it.krw)} 캐달`;
     return `<div class="item" data-action="item-edit" data-id="${esc(it.id)}">
       <span class="who">${esc(it.payer)}</span>
@@ -512,7 +524,7 @@ function summaryText() {
   const rl = codes.map((c) => { try { const r = krwPerUnit(c, ctx()); return `1 ${c}=${fmt(r.rate, r.rate < 10 ? 3 : 2)}원(${sourceLabel(r.source)})`; } catch { return `${c} 환율 없음`; } });
   try { const r = krwPerUnit('CAD', ctx()); rl.push(`1 CAD=${fmt(r.rate, 1)}원`); } catch { /* CAD 없으면 생략 */ }
   if (rl.length) out.push(`환율: ${rl.join(', ')}`);
-  out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${fmt(i.amount, currencyInfo(i.code).dec)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}`));
+  out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${ledgerAmount(i.amount, i.code)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}`));
   return out.join('\n');
 }
 

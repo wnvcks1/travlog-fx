@@ -10,7 +10,7 @@
  * 58종 중 2종은 미확인이라 테이블은 56종. 하나머니 앱 통화 목록과 대조해 틀리면 여기만 고치면 됨.
  */
 
-/** @typedef {{code:string,name:string,sym:string,dec:number,unit:number,travlog:'always'|'event'|'none',spread099?:boolean}} Currency */
+/** @typedef {{code:string,name:string,sym:string,dec:number,unit:number,travlog:'always'|'event'|'none',spread099?:boolean,ceilDisplay?:boolean}} Currency */
 
 /** @type {Currency[]} */
 export const CURRENCIES = [
@@ -74,7 +74,8 @@ export const CURRENCIES = [
   { code: 'ETB', name: '에티오피아 비르', sym: 'Br', dec: 2, unit: 1, travlog: 'event', spread099: true },
   { code: 'OMR', name: '오만 리얄', sym: 'OMR', dec: 3, unit: 1, travlog: 'event', spread099: true },
   // 트래블로그 미지원 — USD 지갑 결제. 여행지 통화라 표시용으로 넣음
-  { code: 'MAD', name: '모로코 디르함', sym: 'DH', dec: 2, unit: 1, travlog: 'none' },
+  // ceilDisplay: 정산 내역에서 소수점을 올림한 정수로 보여 줌(97.6 → 98). 계산은 원래 값 그대로
+  { code: 'MAD', name: '모로코 디르함', sym: 'DH', dec: 2, unit: 1, travlog: 'none', ceilDisplay: true },
   { code: 'KRW', name: '한국 원', sym: '₩', dec: 0, unit: 1, travlog: 'none' },
 ];
 
