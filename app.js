@@ -19,6 +19,9 @@ const state = loadState();
 let rates = state.ratesCache || null;
 /** @type {string[]} */
 let rateLog = [];
+let lastRefreshAt = 0;
+let refreshing = false;
+const STARTED_AT = Date.now();
 const fx = { input: '', code: state.ui.code || 'MAD' };
 /** @type {any} */
 let installEvt = null;
@@ -223,7 +226,7 @@ function renderFx() {
     ${err ? `<div class="err">${err}</div>` : `<div class="rateline">${lines.join('<br>')}</div>`}
     <div class="keypad">${keypad}</div>
     <div class="actions">
-      <button class="btn" data-action="fx-clear">지우기</button>
+      <button class="btn clear" data-action="fx-clear">✕ 지우기</button>
       <button class="btn primary" data-action="fx-add">정산에 추가</button>
     </div>
   </section>`;
@@ -400,6 +403,7 @@ function renderSettings() {
   <section class="card"><h2>환율 데이터</h2>
     <div class="muted">출처 ${esc(rates ? sourceLabel(rates.source) : '없음')}${rates?.via ? ` (${esc(rates.via)} 경유)` : ''}${rates?.baseDate ? ` · 고시일 ${esc(rates.baseDate)}` : ''} · 수집 ${esc(rates ? shortTime(rates.asof) : '—')}${rates?.round ? ` · ${esc(rates.round)}` : ''}${rates?.filledFrom ? ` · 빈 통화는 ${esc(sourceLabel(rates.filledFrom))}로 보충` : ''}</div>
     ${rateTable}${log}
+    <div class="muted">마지막 갱신 ${lastRefreshAt ? esc(shortTime(new Date(lastRefreshAt).toISOString())) : '아직 없음'} · 앱을 열 때·화면에 돌아올 때·30분마다 자동 갱신</div>
     <div class="actions"><button class="btn primary" data-action="rates-refresh">환율 새로고침</button></div>
     <p class="hint">하나은행 고시환율(매매기준율 = 트래블로그 충전가)을 FXCOD 공개 JSON 에서 받음(영업일 하루 3번쯤 갱신). 하나은행에 없는 통화(모로코 디르함 등)는 er-api 의 USD 교차환율, 없거나 오래되면 er-api·ECB 로 대체. 트래블로그 앱에 찍힌 실제 환율과 다르면 위 수동 환율에 넣을 것.</p></section>
   <section class="card"><h2>환급 손실 계산</h2>
@@ -433,20 +437,36 @@ function newTrip(name, code) {
   persist();
 }
 
-async function refreshRates() {
-  toast('환율 받는 중…');
-  const { rates: r, log } = await loadRates({ cache: state.ratesCache });
-  rateLog = log;
-  logger.info('rates', log);
-  if (r) {
-    rates = r;
-    state.ratesCache = r;
-    persist();
-    toast(`환율 갱신 · ${sourceLabel(r.source)} ${shortTime(r.asof)}`);
-  } else {
-    toast('환율을 못 받음. 수동 환율로 계산');
+/**
+ * 환율 갱신. silent 면 토스트 없이 조용히. 하나은행 값을 못 받았으면 20초 뒤 한 번 더 시도(모로코처럼 느린 망 대비).
+ * @param {{silent?:boolean, retry?:boolean}} [opts]
+ */
+async function refreshRates(opts = {}) {
+  if (refreshing) return;
+  refreshing = true;
+  badgeEl.style.opacity = '0.5';
+  if (!opts.silent) toast('환율 받는 중…');
+  try {
+    const { rates: r, log } = await loadRates({ cache: state.ratesCache, timeoutMs: 20000 });
+    rateLog = log;
+    logger.info('rates', log);
+    if (r) {
+      rates = r;
+      state.ratesCache = r;
+      lastRefreshAt = Date.now();
+      persist();
+      if (!opts.silent) toast(`환율 갱신 · ${sourceLabel(r.source)} ${shortTime(r.asof)}`);
+    } else if (!opts.silent) {
+      toast('환율을 못 받음. 수동 환율로 계산');
+    }
+    if (!opts.retry && (!r || r.source !== 'hana')) {
+      window.setTimeout(() => { refreshRates({ silent: true, retry: true }).catch((e) => logger.warn(e)); }, 20000);
+    }
+  } finally {
+    refreshing = false;
+    badgeEl.style.opacity = '';
+    render();
   }
-  render();
 }
 
 /**
@@ -662,14 +682,27 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 if (!draft.code) draft.code = activeTrip().code;
 render();
-refreshRates().catch((e) => logger.error('환율 로딩 실패', e));
+refreshRates({ silent: true }).catch((e) => logger.error('환율 로딩 실패', e));
+
+// 자동 갱신: 화면에 돌아왔을 때(10분 지났으면), 온라인 복귀, 30분마다
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Date.now() - lastRefreshAt > 10 * 60 * 1000) refreshRates({ silent: true }).catch((e) => logger.warn(e));
+});
+window.addEventListener('online', () => { refreshRates({ silent: true }).catch((e) => logger.warn(e)); });
+window.setInterval(() => { if (!document.hidden) refreshRates({ silent: true }).catch((e) => logger.warn(e)); }, 30 * 60 * 1000);
+
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  let reloading = false;
+  let firstClaim = !navigator.serviceWorker.controller; // 첫 설치의 claim 은 업데이트가 아님
+  // 새 버전 서비스워커가 자리를 잡으면 앱을 연 직후엔 바로 새로고침, 쓰는 중이면 안내만
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (firstClaim) { firstClaim = false; return; }
+    if (reloading) return;
+    reloading = true;
+    if (Date.now() - STARTED_AT < 8000 || document.hidden) window.location.reload();
+    else toast('새 버전 준비됨. 다음에 열면 적용');
+  });
   navigator.serviceWorker.register('./sw.js').then((reg) => {
-    reg.addEventListener('updatefound', () => {
-      const nw = reg.installing;
-      nw?.addEventListener('statechange', () => {
-        if (nw.state === 'installed' && navigator.serviceWorker.controller) toast('새 버전 있음. 설정 → 앱 업데이트');
-      });
-    });
+    reg.update().catch(() => {});
   }).catch((e) => logger.warn('SW 등록 실패', e));
 }
