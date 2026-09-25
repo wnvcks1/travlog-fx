@@ -102,3 +102,11 @@ test('메모 초성(별칭)으로 낸 사람 매칭: ㅈ=으뜸', () => {
   const r2 = parseLedger('ㅈ빵 27', ['으뜸', '서정'], 'MAD');
   assert.equal(r2.items.length, 0);
 });
+
+test('공유 payload 왕복: 현금 지갑·트래블로그 환율·결제 수단까지 그대로', () => {
+  const p = { v: 1, trip: { name: '모로코', code: 'MAD' }, people: ['으뜸이', '서정이'], manual: { usdCross: { MAD: 9.2 } },
+    travlog: { rates: { USD: 1359 }, at: '2026-09-26' }, cash: [{ p: 0, c: 'MAD', a: 3850, n: '환전' }],
+    items: [{ p: 0, d: '입생로랑 박물관', a: 660, c: 'MAD', k: 'card' }, { p: 1, d: '마트', a: 97.6, c: 'MAD' }] };
+  const back = decodeImport(encodeImport(p));
+  assert.deepEqual(back, p);
+});

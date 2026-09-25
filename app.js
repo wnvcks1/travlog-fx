@@ -6,7 +6,7 @@ import { CURRENCIES, currencyInfo } from './currencies.js';
 import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
-import { parseLedger, decodeImport } from './importer.js';
+import { parseLedger, decodeImport, encodeImport } from './importer.js';
 
 const logger = {
   /** @param {...unknown} a */ info: (...a) => console.info('[travlog]', ...a),
@@ -384,15 +384,29 @@ function resnapshotItems(code) {
 async function applyHashImport() {
   const m = /^#import=([A-Za-z0-9_-]+)$/.exec(location.hash);
   if (!m) return;
-  let p;
-  try { p = decodeImport(m[1]); } catch (e) { toast(`가져오기 링크 오류: ${e.message}`); return; }
   history.replaceState(null, '', location.pathname + location.search);
+  await importFromText(m[1]);
+}
+
+/**
+ * 공유 링크(전체 URL 또는 #import= 뒤의 payload 문자열)를 읽어 정산에 넣는다. 설정의 붙여넣기 칸과 주소 해시 둘 다 여기로.
+ * @param {string} text
+ * @returns {Promise<boolean>} 넣었으면 true
+ */
+async function importFromText(text) {
+  const raw = String(text || '').trim();
+  const m = /#import=([A-Za-z0-9_-]+)/.exec(raw);
+  const enc = m ? m[1] : raw;
+  if (!/^[A-Za-z0-9_-]{8,}$/.test(enc)) { toast('공유 링크가 아님'); return false; }
+  let p;
+  try { p = decodeImport(enc); } catch (e) { toast(`가져오기 링크 오류: ${e.message}`); return false; }
   const tripName = p.trip?.name || '여행';
   const hasAny = state.trips.some((t) => t.items.length > 0);
   // 같은 링크를 두 번 누르면 항목이 두 벌 들어감. 내역이 있을 때는 한 번 가져온 링크를 막음
-  const key = `${m[1].length}:${m[1].slice(0, 32)}:${m[1].slice(-32)}`;
-  if (state.imports.includes(key) && hasAny) { toast('이미 가져온 링크라 건너뜀. 다시 넣으려면 내역을 먼저 지울 것'); return; }
-  if (!window.confirm(`${p.items.length}건을 '${tripName}' 정산에 추가할까?`)) return;
+  const key = `${enc.length}:${enc.slice(0, 32)}:${enc.slice(-32)}`;
+  if (state.imports.includes(key) && hasAny) { toast('이미 가져온 링크라 건너뜀. 다시 넣으려면 내역을 먼저 지울 것'); return false; }
+  const items = Array.isArray(p.items) ? p.items : [];
+  if (!window.confirm(`${items.length}건을 '${tripName}' 정산에 추가할까?`)) return false;
   state.imports = [...state.imports.filter((k) => k !== key), key].slice(-20);
   if (Array.isArray(p.people) && p.people.length === state.people.length && !hasAny) {
     state.people = [...p.people];
@@ -402,6 +416,8 @@ async function applyHashImport() {
     if (!state.manual[kind]) continue;
     for (const [code, v] of Object.entries(map)) if (!(state.manual[kind][code] > 0) && v > 0) state.manual[kind][code] = v;
   }
+  // 트래블로그 앱 환율: 내 폰에 없을 때만
+  if (p.travlog?.rates && p.travlog.at && !Object.keys(state.travlog.rates).length) state.travlog = { rates: { ...p.travlog.rates }, at: p.travlog.at };
   let trip = state.trips.find((t) => t.name === tripName);
   if (!trip) {
     // 비어 있는 기본 여행('여행 1')이 있으면 새로 만들지 않고 그 자리를 씀
@@ -411,8 +427,14 @@ async function applyHashImport() {
   }
   state.activeTrip = trip.id;
   draft.code = trip.code;
+  // 현금 지갑: 같은 사람·통화 지갑이 아직 없을 때만
+  for (const c of Array.isArray(p.cash) ? p.cash : []) {
+    const person = state.people[c.p] ?? String(c.p);
+    if (!(c.a > 0) || state.cash.some((x) => x.person === person && x.code === c.c)) continue;
+    state.cash.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, person, code: c.c, amount: c.a, ts: Date.now(), note: c.n || '' });
+  }
   if (!rates) { await refreshRates({ silent: true }).catch(() => {}); }
-  const list = p.items.map((it) => ({
+  const list = items.map((it) => ({
     payer: state.people[it.p] ?? String(it.p), desc: it.d, amount: it.a, code: it.c,
     ...(it.f !== undefined && it.f !== null ? { forWho: state.people[it.f] } : {}), ...(it.n ? { note: it.n } : {}), ...(it.k === 'card' || it.k === 'cash' ? { pay: it.k } : {}),
   }));
@@ -422,6 +444,27 @@ async function applyHashImport() {
   render();
   toast(`${added}건 추가${failed.length ? ` · ${failed.length}건 실패(환율 없음)` : ''}`);
   if (failed.length) logger.warn('가져오기 실패', failed);
+  return true;
+}
+
+/**
+ * 지금 여행의 정산 전체(사람·항목·수동 환율·현금 지갑·트래블로그 환율)를 담은 공유 링크. 다른 폰에서 열거나 붙여넣으면 그대로 들어감.
+ * @returns {string}
+ */
+function buildShareLink() {
+  const trip = activeTrip();
+  const pi = (name) => Math.max(0, state.people.indexOf(name));
+  const payload = {
+    v: 1, trip: { name: trip.name, code: trip.code }, people: [...state.people],
+    manual: { usdCross: { ...state.manual.usdCross } },
+    ...(travlogActive() ? { travlog: { rates: { ...state.travlog.rates }, at: state.travlog.at } } : {}),
+    cash: state.cash.map((c) => ({ p: pi(c.person), c: c.code, a: c.amount, ...(c.note ? { n: c.note } : {}) })),
+    items: [...trip.items].sort((a, b) => a.ts - b.ts).map((it) => ({
+      p: pi(it.payer), d: it.desc || '', a: it.amount, c: it.code,
+      ...(it.forWho ? { f: pi(it.forWho) } : {}), ...(it.note ? { n: it.note } : {}), ...(it.pay ? { k: it.pay } : {}),
+    })),
+  };
+  return `${location.origin}${location.pathname}#import=${encodeImport(payload)}`;
 }
 
 /** @returns {string} */
@@ -481,7 +524,7 @@ function renderSettle() {
       <div class="line total"><span>합계</span><span>${fmt(s.total)}원 <small class="muted">${cadOf(s.total)} 캐달</small></span></div>
       <div class="line"><span>분담(${esc(ratioTxt)})</span><span>${share}</span></div>
       ${xfer}
-      <div class="actions"><button class="btn" data-action="settle-copy">텍스트 복사</button></div>
+      <div class="actions"><button class="btn" data-action="settle-copy">텍스트 복사</button><button class="btn" data-action="settle-share">공유 링크</button></div>
     </div>`;
   } catch (e) {
     summary = `<div class="summary"><div class="err">정산 계산 실패: ${esc(e.message)}</div></div>`;
@@ -681,6 +724,10 @@ function renderSettings() {
       <input id="m-val" inputmode="decimal" placeholder="9.2"></div>
     <div class="actions"><button class="btn primary" data-action="manual-add">수동 환율 저장</button></div>
     <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "USD 1 = 9.2 MAD".</p></section>
+  <section class="card"><h2>공유 링크로 가져오기</h2>
+    <p class="hint" style="margin:0 0 6px">다른 폰에서 만든 "공유 링크"를 여기 붙여 넣으면 정산 항목·현금 지갑·환율이 들어옴. 아이폰 홈 화면 앱은 링크를 눌러도 앱으로 안 열리니 이 칸을 쓸 것.</p>
+    <textarea id="share-in" rows="3" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.85rem" placeholder="https://wnvcks1.github.io/travlog-fx/#import=…"></textarea>
+    <div class="actions"><button class="btn primary" data-action="share-import">가져오기</button></div></section>
   <section class="card"><h2>환율 데이터</h2>
     <div class="muted">출처 ${esc(rates ? sourceLabel(rates.source) : '없음')}${rates?.via ? ` (${esc(rates.via)} 경유)` : ''}${rates?.baseDate ? ` · 고시일 ${esc(rates.baseDate)}` : ''} · 수집 ${esc(rates ? shortTime(rates.asof) : '—')}${rates?.round ? ` · ${esc(rates.round)}` : ''}${rates?.filledFrom ? ` · 빈 통화는 ${esc(sourceLabel(rates.filledFrom))}로 보충` : ''}</div>
     ${rateTable}${log}
@@ -843,6 +890,23 @@ async function onClick(el) {
       const trip = activeTrip();
       if (!trip.items.length || !window.confirm(`"${trip.name}" 내역 ${trip.items.length}건을 전부 지울까? 되돌릴 수 없음.`)) return;
       trip.items = []; editingId = null; persist(); render(); toast('내역을 비움'); break;
+    }
+    case 'settle-share': {
+      const url = buildShareLink();
+      const n = activeTrip().items.length;
+      if (navigator.share) {
+        try { await navigator.share({ title: `${activeTrip().name} 정산 ${n}건`, text: `${activeTrip().name} 정산 ${n}건 (환율·정산 앱)`, url }); return; }
+        catch (e) { if (e && e.name === 'AbortError') return; }
+      }
+      try { toast((await copyText(url)) ? `공유 링크 복사함 (${n}건). 카톡에 붙여 넣기` : '복사 실패'); }
+      catch (e) { toast(`복사 실패: ${e.message}`); }
+      break;
+    }
+    case 'share-import': {
+      const ta = /** @type {HTMLTextAreaElement} */ (document.getElementById('share-in'));
+      if (!ta || !ta.value.trim()) { toast('링크를 붙여 넣어 줘'); return; }
+      if (await importFromText(ta.value)) ta.value = '';
+      break;
     }
     case 'settle-copy': {
       try { toast((await copyText(summaryText())) ? '복사함. 노션·카톡에 붙여 넣기' : '복사 실패'); }
