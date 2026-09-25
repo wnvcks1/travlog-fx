@@ -26,13 +26,17 @@ export function chosung(ch) {
 /**
  * @param {string} line
  * @param {string[]} people
+ * @param {string[]} [initials] 메모에서 쓰는 초성·별칭. people 과 같은 순서. 없으면 이름 첫 글자 초성
  * @returns {{payer:string, rest:string}|null}
  */
-function splitPayer(line, people) {
+function splitPayer(line, people, initials = []) {
   const t = line.trim();
   for (const p of people) {
     if (t.startsWith(p)) return { payer: p, rest: t.slice(p.length) };
   }
+  // 별칭(예: ㅈ=으뜸)이 이름보다 먼저. 긴 별칭부터 맞춰 봄
+  const al = people.map((p, i) => ({ p, a: String(initials[i] || '').trim() })).filter((x) => x.a).sort((x, y) => y.a.length - x.a.length);
+  for (const { p, a } of al) if (t.startsWith(a)) return { payer: p, rest: t.slice(a.length) };
   const first = t[0];
   if (CHO.includes(first)) {
     const p = people.find((n) => chosung(n[0]) === first);
@@ -64,16 +68,17 @@ function lastAmount(seg, defaultCode) {
  * @param {string} text 노션 페이지 본문(줄 단위)
  * @param {string[]} people 사람 이름(낸 사람 매칭용)
  * @param {string} [defaultCode] 단위 없는 금액의 통화. 기본 MAD
+ * @param {string[]} [initials] 메모 초성·별칭(people 순서). 예: ['ㅈ','ㅅ']
  * @returns {{items:Array<{payer:string, desc:string, amount:number, code:string, note?:string}>, skipped:string[], warnings:string[]}}
  */
-export function parseLedger(text, people, defaultCode = 'MAD') {
+export function parseLedger(text, people, defaultCode = 'MAD', initials = []) {
   const items = [];
   const skipped = [];
   const warnings = [];
   for (const raw of String(text).split(/\r?\n/)) {
     const line = raw.replace(/<br>/g, ' ').trim();
     if (!line) continue;
-    const sp = splitPayer(line, people);
+    const sp = splitPayer(line, people, initials);
     if (!sp) { skipped.push(line); continue; }
     let rest = sp.rest.trim();
     // 낸 사람 바로 뒤에 숫자가 오면 합계 줄(예: "ㅈ 2604 다르함 + 356,300원") → 항목 아님

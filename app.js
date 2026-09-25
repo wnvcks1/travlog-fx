@@ -274,7 +274,7 @@ function renderPasteBox() {
     <textarea id="paste-text" rows="6" style="width:100%;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--card);color:var(--text)" placeholder="ㅈ빵 + 망고주스 = 5 + 22 = 27
 ㅅ마트 97.6
 ㅈ사하라 투어 191 달러">${esc(pasteBox.text)}</textarea>
-    <p class="hint">줄 맨 앞 초성(${state.people.map((p) => `${esc(chosungOf(p))}=${esc(p)}`).join(', ')})이 낸 사람. 단위 없으면 ${esc(trip.code)}. 원·달러·유로 단위는 그대로 읽음.</p>
+    <p class="hint">줄 맨 앞 초성(${state.people.map((p, i) => `${esc(state.initials[i] || chosungOf(p))}=${esc(p)}`).join(', ')})이 낸 사람. 초성은 설정에서 바꿈. 단위 없으면 ${esc(trip.code)}. 원·달러·유로 단위는 그대로 읽음.</p>
     <div class="actions"><button class="btn" data-action="paste-preview">읽어 보기</button><button class="btn primary" data-action="paste-add" ${pasteBox.items.length ? '' : 'disabled'}>${pasteBox.items.length}건 추가</button><button class="btn sm" data-action="paste-close">닫기</button></div>
     ${preview}${skipped}${warns}
   </section>`;
@@ -515,7 +515,7 @@ function saveDraft() {
 
 /** @returns {string} */
 function renderSettings() {
-  const people = state.people.map((p, i) => `<div class="row"><label>사람 ${i + 1}</label><input data-action="set-person" data-i="${i}" value="${esc(p)}"><input data-action="set-ratio" data-i="${i}" value="${esc(state.ratio[i])}" inputmode="decimal" style="flex:0 0 72px" aria-label="분담 비율"></div>`).join('');
+  const people = state.people.map((p, i) => `<div class="row"><label>사람 ${i + 1}</label><input data-action="set-person" data-i="${i}" value="${esc(p)}"><input data-action="set-initial" data-i="${i}" value="${esc(state.initials[i] || '')}" style="flex:0 0 56px;text-align:center" aria-label="메모 초성" placeholder="초성"><input data-action="set-ratio" data-i="${i}" value="${esc(state.ratio[i])}" inputmode="decimal" style="flex:0 0 60px" aria-label="분담 비율"></div>`).join('');
   const trips = state.trips.map((t) => `<div class="row"><input data-action="trip-name" data-id="${esc(t.id)}" value="${esc(t.name)}"><select data-action="trip-code" data-id="${esc(t.id)}" style="flex:0 0 44%">${currencyOptions(t.code)}</select><button class="btn sm danger" data-action="trip-delete" data-id="${esc(t.id)}">삭제</button></div>`).join('');
   const favChips = CURRENCIES.filter((c) => c.code !== 'KRW').map((c) => `<button class="chip ${state.favorites.includes(c.code) ? 'on' : ''}" data-action="fav-toggle" data-code="${esc(c.code)}">${esc(c.code)}</button>`).join('');
   const manualRows = [
@@ -538,7 +538,7 @@ function renderSettings() {
   const log = rateLog.length ? `<ul class="list-plain">${rateLog.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '';
 
   return `
-  <section class="card"><h2>사람 · 분담 비율</h2>${people}<p class="hint">이름을 바꾸면 기존 내역의 이름도 같이 바뀜. 비율 1:1 이 균등.</p></section>
+  <section class="card"><h2>사람 · 메모 초성 · 분담 비율</h2>${people}<p class="hint">이름을 바꾸면 기존 내역의 이름도 같이 바뀜. 가운데는 노션 메모 줄 맨 앞 글자(ㅈ·ㅅ), 오른쪽은 분담 비율(1:1 이 균등).</p></section>
   <section class="card"><h2>여행</h2>${trips}<div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
   <section class="card"><h2>즐겨찾기 통화</h2><div class="chips" style="flex-wrap:wrap;overflow:visible">${favChips}</div></section>
   <section class="card"><h2>수동 환율 (항상 우선)</h2>${manualRows}
@@ -655,7 +655,7 @@ async function onClick(el) {
     case 'paste-close': pasteBox = null; render(); break;
     case 'paste-preview': {
       const text = /** @type {HTMLTextAreaElement} */ (document.getElementById('paste-text')).value;
-      const r = parseLedger(text, state.people, activeTrip().code);
+      const r = parseLedger(text, state.people, activeTrip().code, state.initials);
       pasteBox = { text, ...r };
       render(); break;
     }
@@ -790,6 +790,7 @@ function onInput(el) {
       for (const t of state.trips) for (const it of t.items) if (it.payer === old) it.payer = nv;
       persist(); break;
     }
+    case 'set-initial': { state.initials[Number(d.i)] = el.value.trim(); persist(); break; }
     case 'set-ratio': {
       const v = parseAmount(el.value);
       if (v >= 0) { state.ratio[Number(d.i)] = v; persist(); }

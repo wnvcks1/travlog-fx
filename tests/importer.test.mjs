@@ -93,3 +93,12 @@ test('encode/decode 왕복 (한글 포함)', () => {
   assert.deepEqual(decodeImport(s), p);
   assert.throws(() => decodeImport(encodeImport({ v: 2 })));
 });
+
+test('메모 초성(별칭)으로 낸 사람 매칭: ㅈ=으뜸', () => {
+  const r = parseLedger('ㅈ빵 27\nㅅ마트 97.6\n으뜸택시 30', ['으뜸', '서정'], 'MAD', ['ㅈ', 'ㅅ']);
+  assert.deepEqual(r.items.map((i) => `${i.payer} ${i.amount}`), ['으뜸 27', '서정 97.6', '으뜸 30']);
+  assert.equal(r.skipped.length, 0);
+  // 초성 없이 이름만 주면 ㅈ 줄은 못 읽음(으뜸의 초성은 ㅇ)
+  const r2 = parseLedger('ㅈ빵 27', ['으뜸', '서정'], 'MAD');
+  assert.equal(r2.items.length, 0);
+});

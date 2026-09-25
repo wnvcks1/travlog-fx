@@ -2,6 +2,7 @@
  * localStorage 저장소. 실패해도 앱은 떠야 하므로 모든 접근을 try/catch 로 감쌈.
  */
 import { DEFAULT_FAVORITES } from './currencies.js';
+import { chosung } from './importer.js';
 
 const KEY = 'travlog.v1';
 /** 처음 한 번만 넣는 고정 교차환율(USD 1 = ? 현지). 사용자가 지우면 다시 넣지 않음. */
@@ -11,12 +12,14 @@ export const FIXED_CROSS = { MAD: 9.2 };
 export function defaultState() {
   return {
     version: 1,
-    people: ['나', '동행'],
+    people: ['으뜸', '서정'],
+    // 노션 메모 줄 맨 앞 초성 → 사람. Chan 메모는 ㅈ/ㅅ
+    initials: ['ㅈ', 'ㅅ'],
     ratio: [1, 1],
     favorites: [...DEFAULT_FAVORITES],
     // MAD 는 트래블로그 미지원 → USD 지갑 결제. Chan 실측 "USD 1 = 9.2 MAD" 를 기본 고정값으로 둠(설정에서 수정 가능)
     manual: { krw: {}, usdCross: { ...FIXED_CROSS } },
-    migrated: { mad92: true },
+    migrated: { mad92: true, names2: true },
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
     ratesCache: null,
@@ -60,6 +63,20 @@ export function mergeState(base, saved) {
   out.ui = { ...base.ui, ...(saved.ui || {}) };
   if (!Array.isArray(out.trips) || out.trips.length === 0) out.trips = base.trips;
   if (!Array.isArray(out.people) || out.people.length < 2) out.people = base.people;
+  // 2026-09-26 이전 기본 이름(나·동행)을 으뜸·서정으로 한 번만 바꿈. 내역의 낸 사람도 같이
+  if (!out.migrated.names2) {
+    if (out.people[0] === '나' && out.people[1] === '동행') {
+      const map = { 나: base.people[0], 동행: base.people[1] };
+      out.people = out.people.map((p) => map[p] || p);
+      for (const t of out.trips || []) for (const it of t.items || []) {
+        if (map[it.payer]) it.payer = map[it.payer];
+        if (it.forWho && map[it.forWho]) it.forWho = map[it.forWho];
+      }
+    }
+    out.migrated.names2 = true;
+  }
+  const savedInit = Array.isArray(saved.initials) ? saved.initials : [];
+  out.initials = out.people.map((p, i) => savedInit[i] || (p === base.people[i] ? base.initials[i] : chosung(p[0])));
   if (!Array.isArray(out.ratio) || out.ratio.length !== out.people.length) out.ratio = out.people.map(() => 1);
   if (!out.trips.some((t) => t.id === out.activeTrip)) out.activeTrip = out.trips[0].id;
   return out;
