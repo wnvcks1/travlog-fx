@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="112" fill="#1560bd"/>
+  <rect x="104" y="72" width="304" height="368" rx="34" fill="#ffffff"/>
+  <rect x="128" y="98" width="256" height="121" rx="18" fill="#e9eef5"/>
+  <text x="146" y="184" font-family="Noto Sans KR, Apple SD Gothic Neo, Malgun Gothic, Arial, sans-serif" font-size="76" font-weight="700" fill="#1a6fd4" letter-spacing="-4">C$</text>
+  <text x="290" y="186" font-family="Noto Sans KR, Apple SD Gothic Neo, Malgun Gothic, Arial, sans-serif" font-size="88" font-weight="700" fill="#c0392b">₩</text>
+  <g fill="#d9e2ee">
+    <rect x="128" y="242" width="72" height="50" rx="14"/><rect x="220" y="242" width="72" height="50" rx="14"/>
+    <rect x="128" y="311" width="72" height="50" rx="14"/><rect x="220" y="311" width="72" height="50" rx="14"/>
+    <rect x="128" y="380" width="72" height="50" rx="14"/><rect x="220" y="380" width="72" height="50" rx="14"/>
+  </g>
+  <g fill="#1a6fd4">
+    <rect x="312" y="242" width="72" height="50" rx="14"/><rect x="312" y="311" width="72" height="50" rx="14"/><rect x="312" y="380" width="72" height="50" rx="14"/>
+  </g>
+</svg>

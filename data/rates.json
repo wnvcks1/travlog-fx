@@ -1,0 +1,14 @@
+{
+  "source": "sample",
+  "asof": "2026-09-25T00:00:00+09:00",
+  "round": "샘플",
+  "base": "KRW",
+  "note": "저장소에 들어 있는 형식 예시. 실제 값은 GitHub Actions 가 배포할 때 scripts/fetch-rates.mjs 로 새로 만듦.",
+  "rates": {
+    "USD": { "mid": 1357.0, "ttb": 1343.7, "tts": 1370.3, "unit": 1 },
+    "JPY": { "mid": 912.0, "ttb": 903.1, "tts": 920.9, "unit": 100 },
+    "EUR": { "mid": 1590.0, "ttb": 1574.2, "tts": 1605.8, "unit": 1 },
+    "CAD": { "mid": 990.0, "ttb": 980.4, "tts": 999.6, "unit": 1 }
+  },
+  "usdCross": { "MAD": 9.2, "INR": 83.5, "MXN": 18.5 }
+}

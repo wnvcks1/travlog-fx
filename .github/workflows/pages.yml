@@ -1,0 +1,53 @@
+name: pages
+
+# 트래블로그 환율·정산 PWA 를 GitHub Pages 로 배포.
+# 환율(data/rates.json)은 빌드 때 받아 아티팩트에만 넣는다(커밋 없음).
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 0-8 * * 1-5'   # KST 09:23 ~ 17:23 매시간, 평일
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 테스트
+        run: node --test tests/*.test.mjs
+      - name: 환율 받기 (하나은행 FXCOD → er-api → ECB)
+        run: node scripts/fetch-rates.mjs
+      - name: 사이트 조립
+        run: |
+          mkdir -p site
+          cp -r index.html app.js calc.js rates.js store.js currencies.js manifest.webmanifest sw.js icons data site/
+          sed -i "s/__BUILD__/${GITHUB_RUN_NUMBER}/g" site/sw.js site/app.js
+          sed -i "s/__BUILD__/${GITHUB_RUN_NUMBER}/g" site/sw.js site/app.js
+          head -c 300 site/data/rates.json; echo
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
