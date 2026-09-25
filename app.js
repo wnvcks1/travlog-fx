@@ -23,6 +23,13 @@ let rateLog = [];
 let lastRefreshAt = 0;
 let refreshing = false;
 const STARTED_AT = Date.now();
+// 저장본에 9.2 고정값이 방금 들어갔으면 예전 MAD 항목도 그 값으로 다시 계산(환율 캐시가 없으면 다음 실행에서)
+if (!state.migrated.mad92Items) {
+  let n = 0;
+  for (const c of Object.keys(state.manual.usdCross)) n += resnapshotItems(c);
+  if (rates) { state.migrated.mad92Items = true; saveState(state); }
+  if (n) console.info('[travlog] 고정 교차환율로 내역', n, '건 다시 계산');
+}
 const fx = { input: '', code: state.ui.code || 'MAD' };
 /** @type {any} */
 let installEvt = null;
@@ -136,20 +143,20 @@ function currencyOptions(selected) {
   return `<optgroup label="즐겨찾기">${fav.map(opt).join('')}</optgroup><optgroup label="전체">${rest.map((c) => opt(c.code)).join('')}</optgroup>`;
 }
 
-function renderBadge() {
-  if (!rates) {
-    badgeEl.innerHTML = '<span class="warn">환율 없음 🔴</span>';
-    return;
-  }
-  const age = hoursOld(rates);
-  const stale = age > (state.settings.staleHours || 24);
+/** @returns {string} 출처·고시일·신선도 HTML. 예: "하나은행 09-23 고시 🟢" */
+function badgeHtml() {
+  if (!rates) return '<span class="warn">환율 없음 🔴</span>';
+  const stale = hoursOld(rates) > (state.settings.staleHours || 24);
   const when = rates.baseDate ? `${esc(rates.baseDate.slice(5))} 고시` : esc(shortTime(rates.asof));
-  badgeEl.innerHTML = `${esc(sourceLabel(rates.source))} ${when} ${stale ? '<span class="warn">🟡</span>' : '<span class="ok">🟢</span>'}`;
+  return `${esc(sourceLabel(rates.source))} ${when} ${stale ? '<span class="warn">🟡</span>' : '<span class="ok">🟢</span>'}`;
 }
+
+function renderBadge() { badgeEl.innerHTML = badgeHtml(); }
 
 function render() {
   const tab = state.ui.tab;
   for (const b of tabs.querySelectorAll('button')) b.classList.toggle('on', b.dataset.tab === tab);
+  document.body.classList.toggle('fx', tab === 'fx');
   renderBadge();
   if (tab === 'settle') { titleEl.textContent = `정산 · ${activeTrip().name}`; view.innerHTML = renderSettle(); }
   else if (tab === 'settings') { titleEl.textContent = '설정'; view.innerHTML = renderSettings(); }
@@ -196,20 +203,24 @@ function renderFx() {
       return `<div class="res"><div class="lbl">${esc(lbl)}</div><div class="v">${fmt(v, t === 'KRW' ? 0 : ti.dec)} <small>${esc(unit)}</small></div></div>`;
     }).join('');
 
-    const per = (c) => { const r = krwPerUnit(c, ctx()); const u = r.unit > 1 ? r.unit : 1; return `${u > 1 ? u : 1} ${c} = ${fmt(r.rate * u, r.rate * u < 10 ? 3 : 2)}원 · ${sourceLabel(r.source)}`; };
-    if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b>`);
+    // 1 단위당 원화. 예: "1 MAD = 147.42원", "100 JPY = 912.30원"
+    const per = (c) => { const r = krwPerUnit(c, ctx()); const u = r.unit > 1 ? r.unit : 1; return `${u} ${c} = ${fmt(r.rate * u, r.rate * u < 10 ? 3 : 2)}원`; };
+    const crossLabel = (c) => (state.manual.usdCross?.[c] > 0 ? '고정' : '자동');
+    const usdAmt = krw / usd.rate;
+    if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b> · ${badgeHtml()}`);
     if (unsupported(code)) {
-      const cross = crossOf(code);
-      lines.push(`${esc(code)} 는 트래블로그 미지원 → USD 지갑에서 결제: USD 1 = ${fmt(cross || 0, 2)} ${esc(code)}${state.manual.usdCross?.[code] ? '(수동)' : ''} → ${fmt(amt, info.dec)} ${esc(code)} = ${fmt(krw / usd.rate, 2)} USD → ×${fmt(usd.rate, 1)}원 = ${fmt(krw)}원`);
+      // 미지원 통화는 USD 지갑에서 빠짐: 교차 → USD 금액 → 원화, 단계마다 한 줄
+      lines.push(`USD 1 = ${fmt(crossOf(code) || 0, 2)} ${esc(code)} (${crossLabel(code)}) · USD 지갑에서 결제`);
+      lines.push(`${fmt(amt, info.dec)} ${esc(code)} = ${fmt(usdAmt, 2)} USD`);
+      lines.push(`${fmt(usdAmt, 2)} USD × ${fmt(usd.rate, 2)}원 = ${fmt(krw)}원`);
     }
     for (const t of targetsFor(code)) {
       if (unsupported(t)) {
-        const cross = crossOf(t);
-        lines.push(`${esc(t)} 는 USD 지갑 결제: ${fmt(krw / usd.rate, 2)} USD × ${fmt(cross || 0, 2)} = ${fmt(krw / krwPerUnit(t, ctx()).rate, currencyInfo(t).dec)} ${esc(t)}`);
+        lines.push(`${esc(t)} 는 USD 지갑 결제: ${fmt(usdAmt, 2)} USD × ${fmt(crossOf(t) || 0, 2)} (${crossLabel(t)}) = ${fmt(krw / krwPerUnit(t, ctx()).rate, currencyInfo(t).dec)} ${esc(t)}`);
       }
     }
-    if (code !== 'USD') lines.push(esc(per('USD')));
-    lines.push(esc(per('CAD')));
+    const base = [code !== 'USD' ? per('USD') : '', code !== 'CAD' ? per('CAD') : ''].filter(Boolean);
+    if (base.length) lines.push(`${esc(base.join(' · '))} · ${esc(sourceLabel(krwPerUnit('USD', ctx()).source))}`);
   } catch (e) {
     if (e instanceof RateMissingError) {
       err = `${esc(e.code)} 환율이 없음. 설정 → 수동 환율에 "USD 1달러 = 몇 ${esc(e.code)}" 를 넣어 줘.`;
@@ -304,6 +315,31 @@ function addItems(trip, list) {
     added += 1;
   }
   return { added, failed };
+}
+
+/**
+ * 수동 환율이 바뀌면 그 통화 내역의 원화 스냅샷을 지금 환율로 다시 찍는다("USD 1 = 9.2 MAD 고정" 이 옛 항목에도 적용되게).
+ * 사용자가 직접 원화값을 고친 항목은 없으므로 통화가 같으면 전부 대상.
+ * @param {string} code
+ * @returns {number} 다시 계산한 항목 수
+ */
+function resnapshotItems(code) {
+  let r;
+  try { r = krwPerUnit(code, ctx()); } catch (e) {
+    if (e instanceof RateMissingError) return 0;
+    throw e;
+  }
+  let n = 0;
+  for (const t of state.trips) {
+    for (const it of t.items) {
+      if (it.code !== code) continue;
+      const krw = Math.round(it.amount * r.rate);
+      if (krw === it.krw && it.source === r.source) continue;
+      Object.assign(it, { krw, rate: r.rate, source: r.source });
+      n += 1;
+    }
+  }
+  return n;
 }
 
 /**
@@ -611,7 +647,6 @@ async function onClick(el) {
       draft = { payer: draft.payer, desc: '', amount: String(amt), code: fx.code };
       editingId = null;
       state.ui.tab = 'settle'; persist(); render();
-      document.getElementById('d-desc')?.focus();
       break;
     }
     case 'draft-payer': draft.payer = d.payer; render(); break;
@@ -678,9 +713,14 @@ async function onClick(el) {
       const v = parseAmount(/** @type {HTMLInputElement} */ (document.getElementById('m-val')).value);
       if (!(v > 0)) { toast('값을 넣어 줘'); return; }
       state.manual[kind][code] = v;
-      persist(); render(); toast(`${code} 수동 환율 저장`); break;
+      const n = resnapshotItems(code);
+      persist(); render(); toast(`${code} 수동 환율 저장${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
     }
-    case 'manual-del': delete state.manual[d.kind][d.code]; persist(); render(); break;
+    case 'manual-del': {
+      delete state.manual[d.kind][d.code];
+      const n = resnapshotItems(d.code);
+      persist(); render(); if (n) toast(`내역 ${n}건 다시 계산`); break;
+    }
     case 'rates-refresh': await refreshRates(); break;
     case 'install': {
       if (!installEvt) return;

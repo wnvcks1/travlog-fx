@@ -120,6 +120,26 @@ table.rates td:first-child,table.rates th:first-child{text-align:left;}
 #toast.show{opacity:1;}
 .empty{color:var(--sub);text-align:center;padding:18px 0;font-size:.9rem;}
 .pill{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--sub);vertical-align:middle;margin-left:6px;}
+/* 환율 탭: 헤더 없이 카드 하나가 화면(탭바 위까지)을 꽉 채움. 스크롤 없이 키패드까지 한 화면 */
+body.fx{padding-bottom:0;overflow:hidden;}
+body.fx .top{display:none;}
+body.fx main{height:calc(100vh - 60px - env(safe-area-inset-bottom));height:calc(100dvh - 60px - env(safe-area-inset-bottom));padding:calc(6px + env(safe-area-inset-top)) 10px 6px;display:flex;flex-direction:column;overflow:auto;}
+body.fx section.card{flex:1;display:flex;flex-direction:column;min-height:0;margin:0;padding:8px 10px 10px;}
+body.fx .chips{padding:2px 0 4px;gap:6px;}
+body.fx .chip{min-height:34px;padding:5px 12px;font-size:.88rem;}
+body.fx .muted{font-size:.78rem;}
+body.fx .amount{min-height:44px;padding:2px 4px 0;}
+body.fx .amount .num{font-size:2rem;}
+body.fx .results{gap:6px;margin:4px 0;}
+body.fx .res{padding:7px 10px;border-radius:10px;}
+body.fx .res .lbl{font-size:.72rem;}
+body.fx .res .v{font-size:1.15rem;margin-top:0;}
+body.fx .results .res:nth-child(odd):last-child{grid-column:1/-1;}
+body.fx .rateline{font-size:.74rem;line-height:1.45;margin:2px 2px 6px;}
+body.fx .keypad{flex:1;min-height:0;grid-template-rows:repeat(4,minmax(40px,1fr));gap:6px;}
+body.fx .key{min-height:0;font-size:1.3rem;}
+body.fx .actions{margin-top:8px;}
+body.fx .btn{min-height:44px;}
 </style>
 </head>
 <body>

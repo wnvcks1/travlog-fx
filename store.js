@@ -4,6 +4,8 @@
 import { DEFAULT_FAVORITES } from './currencies.js';
 
 const KEY = 'travlog.v1';
+/** 처음 한 번만 넣는 고정 교차환율(USD 1 = ? 현지). 사용자가 지우면 다시 넣지 않음. */
+export const FIXED_CROSS = { MAD: 9.2 };
 
 /** @returns {object} 새 기본 상태 */
 export function defaultState() {
@@ -12,7 +14,9 @@ export function defaultState() {
     people: ['나', '동행'],
     ratio: [1, 1],
     favorites: [...DEFAULT_FAVORITES],
-    manual: { krw: {}, usdCross: {} },
+    // MAD 는 트래블로그 미지원 → USD 지갑 결제. Chan 실측 "USD 1 = 9.2 MAD" 를 기본 고정값으로 둠(설정에서 수정 가능)
+    manual: { krw: {}, usdCross: { ...FIXED_CROSS } },
+    migrated: { mad92: true },
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
     ratesCache: null,
@@ -46,6 +50,12 @@ export function loadState() {
 export function mergeState(base, saved) {
   const out = { ...base, ...saved };
   out.manual = { krw: { ...(saved.manual?.krw || {}) }, usdCross: { ...(saved.manual?.usdCross || {}) } };
+  out.migrated = { ...(saved.migrated || {}) };
+  // 2026-09-25 이전 저장본: MAD 9.2 고정값을 한 번만 채움
+  if (!out.migrated.mad92) {
+    for (const [c, v] of Object.entries(FIXED_CROSS)) if (!(out.manual.usdCross[c] > 0)) out.manual.usdCross[c] = v;
+    out.migrated.mad92 = true;
+  }
   out.settings = { ...base.settings, ...(saved.settings || {}) };
   out.ui = { ...base.ui, ...(saved.ui || {}) };
   if (!Array.isArray(out.trips) || out.trips.length === 0) out.trips = base.trips;
