@@ -3,7 +3,7 @@
  * 상태는 store.js(localStorage), 계산은 calc.js, 환율 로딩은 rates.js.
  */
 import { CURRENCIES, currencyInfo } from './currencies.js';
-import { krwPerUnit, settle, fmt, refundLoss, RateMissingError } from './calc.js';
+import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport } from './importer.js';
@@ -35,7 +35,7 @@ const fx = { input: '', code: state.ui.code || 'MAD' };
 let installEvt = null;
 /** @type {string|null} */
 let editingId = null;
-let draft = { payer: state.people[0], desc: '', amount: '', code: '', forWho: '' };
+let draft = { payer: state.people[0], desc: '', amount: '', code: '', forWho: '', pay: '' };
 /** @type {{text:string, items:any[], skipped:string[], warnings:string[]}|null} */
 let pasteBox = null;
 
@@ -345,7 +345,7 @@ function addItems(trip, list) {
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${added}`,
       ts: Date.now() + added, payer: it.payer, desc: it.desc, amount: it.amount, code: it.code,
       krw: Math.round(it.amount * r.rate), rate: r.rate, source: r.source,
-      ...(it.forWho ? { forWho: it.forWho } : {}), ...(it.note ? { note: it.note } : {}),
+      ...(it.forWho ? { forWho: it.forWho } : {}), ...(it.note ? { note: it.note } : {}), ...(it.pay ? { pay: it.pay } : {}),
     });
     added += 1;
   }
@@ -414,7 +414,7 @@ async function applyHashImport() {
   if (!rates) { await refreshRates({ silent: true }).catch(() => {}); }
   const list = p.items.map((it) => ({
     payer: state.people[it.p] ?? String(it.p), desc: it.d, amount: it.a, code: it.c,
-    ...(it.f !== undefined && it.f !== null ? { forWho: state.people[it.f] } : {}), ...(it.n ? { note: it.n } : {}),
+    ...(it.f !== undefined && it.f !== null ? { forWho: state.people[it.f] } : {}), ...(it.n ? { note: it.n } : {}), ...(it.k === 'card' || it.k === 'cash' ? { pay: it.k } : {}),
   }));
   const { added, failed } = addItems(trip, list);
   persist();
@@ -436,6 +436,7 @@ function renderSettle() {
     <div class="row"><label>여행</label>${tripSel}<button class="btn sm" data-action="trip-new">새 여행</button></div>
     <div class="row"><label>낸 사람</label><div class="payer" style="flex:1">${payerBtns}</div></div>
     <div class="row"><label>몫</label><div class="payer" style="flex:1">${[['', '같이'], ...state.people.map((p) => [p, `${p} 개인`])].map(([v, l]) => `<button class="${(draft.forWho || '') === v ? 'on' : ''}" data-action="draft-for" data-for="${esc(v)}">${esc(l)}</button>`).join('')}</div></div>
+    <div class="row"><label>결제</label><div class="payer" style="flex:1">${[['cash', '현금'], ['card', '카드']].map(([v, l]) => `<button class="${payMethod({ code: draft.code, pay: draft.pay }) === v ? 'on' : ''}" data-action="draft-pay" data-pay="${v}">${l}</button>`).join('')}</div></div>
     <div class="row"><label>내용</label><input id="d-desc" data-action="draft-desc" value="${esc(draft.desc)}" placeholder="타진 + 민트티" autocomplete="off"></div>
     <div class="row"><label>금액</label><input id="d-amount" data-action="draft-amount" value="${esc(draft.amount)}" inputmode="decimal" placeholder="0" autocomplete="off">
       <select data-action="draft-code" style="flex:0 0 46%">${currencyOptions(draft.code)}</select></div>
@@ -449,7 +450,8 @@ function renderSettle() {
 
   const rows = items.map((it) => {
     const i = currencyInfo(it.code);
-    const sub = [it.forWho ? `<b>${esc(it.forWho)} 개인</b>` : '', it.note ? esc(it.note) : ''].filter(Boolean).join(' · ');
+    const payTag = it.pay && it.pay !== payMethod({ code: it.code }) ? `<b>${it.pay === 'card' ? '💳 카드' : '💵 현금'}</b>` : '';
+    const sub = [payTag, it.forWho ? `<b>${esc(it.forWho)} 개인</b>` : '', it.note ? esc(it.note) : ''].filter(Boolean).join(' · ');
     // 메인은 실제로 낸 통화·금액(노션 메모 그대로). 원화·캐달은 환산값이라 작게
     const main = it.code === 'KRW' ? `${fmt(it.amount)}원` : `${ledgerAmount(it.amount, it.code)} ${esc(it.code)}`;
     const conv = it.code === 'KRW' ? `${cadOf(it.krw)} 캐달` : `${fmt(it.krw)}원 · ${cadOf(it.krw)} 캐달`;
@@ -482,7 +484,35 @@ function renderSettle() {
   } catch (e) {
     summary = `<div class="summary"><div class="err">정산 계산 실패: ${esc(e.message)}</div></div>`;
   }
-  return form + summary + list;
+  return form + summary + renderCash(trip) + list;
+}
+
+/**
+ * 현금 지갑 카드. 사람·통화별 환전 − 현금 사용 = 남은 현금, 넣은 돈 목록과 추가 폼.
+ * @param {object} trip
+ * @returns {string}
+ */
+function renderCash(trip) {
+  const bal = cashBalances(trip.items, state.cash);
+  const krwOf = (amt, code) => { try { return `${fmt(amt * krwPerUnit(code, ctx()).rate)}원`; } catch { return ''; } };
+  // 현금은 정수면 소수점 없이, 아니면 두 자리
+  const cf = (x) => fmt(x, Number.isInteger(Math.round(x * 100) / 100) ? 0 : 2);
+  const rows = bal.map((w) => {
+    if (!w.hasWallet) {
+      // 넣은 돈을 안 적은 사람: 잔액 대신 현금 사용액만 알려 줌
+      return `<div class="line"><span>${esc(w.person)} ${esc(w.code)} 현금 사용</span><span class="muted">${cf(w.spent)} ${esc(w.code)} · 넣은 돈 미입력</span></div>`;
+    }
+    const cls = w.remaining < 0 ? 'warn' : '';
+    return `<div class="line"><span>${esc(w.person)} ${esc(w.code)} 남은 현금</span><span class="${cls}"><b>${cf(w.remaining)} ${esc(w.code)}</b> <small class="muted">${esc(krwOf(w.remaining, w.code))}</small></span></div>
+      <div class="line"><span class="muted" style="padding-left:12px">넣은 돈 ${cf(w.topup)} − 현금 사용 ${cf(w.spent)}</span><span></span></div>`;
+  }).join('') || '<div class="empty">아직 없음. 환전한 현금을 아래에 넣으면 정산 내역 중 현금 결제분이 빠져나간 잔액이 보임.</div>';
+  const list = state.cash.map((c) => `<div class="kv"><span>${esc(c.person)} · ${cf(c.amount)} ${esc(c.code)}${c.note ? ` · ${esc(c.note)}` : ''}</span><button class="del" data-action="cash-del" data-id="${esc(c.id)}">삭제</button></div>`).join('');
+  const personSel = `<select id="c-person" style="flex:0 0 30%">${state.people.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>`;
+  return `<section class="card"><h2>현금 지갑</h2>${rows}
+    <div class="hint" style="margin:6px 0">${list ? '넣은 돈:' : ''}</div>${list}
+    <div class="row" style="margin-top:8px">${personSel}<input id="c-amount" inputmode="decimal" placeholder="환전 금액" autocomplete="off"><select id="c-code" style="flex:0 0 34%">${currencyOptions(trip.code)}</select></div>
+    <div class="actions"><button class="btn primary" data-action="cash-add">현금 넣기</button></div>
+    <p class="hint">항목마다 결제(현금/카드)를 정할 수 있음. 정하지 않으면 트래블로그 미지원 통화(MAD)는 현금, 나머지는 카드로 봄. 카드로 낸 MAD(예: 박물관 660)는 그 항목에서 카드로 바꿀 것.</p></section>`;
 }
 
 /**
@@ -524,7 +554,8 @@ function summaryText() {
   const rl = codes.map((c) => { try { const r = krwPerUnit(c, ctx()); return `1 ${c}=${fmt(r.rate, r.rate < 10 ? 3 : 2)}원(${sourceLabel(r.source)})`; } catch { return `${c} 환율 없음`; } });
   try { const r = krwPerUnit('CAD', ctx()); rl.push(`1 CAD=${fmt(r.rate, 1)}원`); } catch { /* CAD 없으면 생략 */ }
   if (rl.length) out.push(`환율: ${rl.join(', ')}`);
-  out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${ledgerAmount(i.amount, i.code)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}`));
+  for (const w of cashBalances(trip.items, state.cash)) if (w.hasWallet) out.push(`현금 ${w.person} ${w.code}: 넣은 돈 ${fmt(w.topup, 2)} − 사용 ${fmt(w.spent, 2)} = 남은 ${fmt(w.remaining, 2)}`);
+  out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${ledgerAmount(i.amount, i.code)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}${i.pay && i.pay !== payMethod({ code: i.code }) ? ` [${i.pay === 'card' ? '카드' : '현금'}]` : ''}`));
   return out.join('\n');
 }
 
@@ -561,6 +592,7 @@ function saveDraft() {
     const changed = it.amount !== amount || it.code !== draft.code;
     Object.assign(it, { payer: draft.payer, desc: draft.desc.trim(), amount, code: draft.code });
     if (draft.forWho) it.forWho = draft.forWho; else delete it.forWho;
+    if (draft.pay) it.pay = draft.pay; else delete it.pay;
     if (changed) Object.assign(it, { krw: Math.round(amount * r.rate), rate: r.rate, source: r.source });
     editingId = null;
     toast('수정함');
@@ -569,11 +601,11 @@ function saveDraft() {
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       ts: Date.now(), payer: draft.payer, desc: draft.desc.trim(), amount, code: draft.code,
       krw: Math.round(amount * r.rate), rate: r.rate, source: r.source,
-      ...(draft.forWho ? { forWho: draft.forWho } : {}),
+      ...(draft.forWho ? { forWho: draft.forWho } : {}), ...(draft.pay ? { pay: draft.pay } : {}),
     });
     toast(`추가함 · ${fmt(amount * r.rate)}원`);
   }
-  draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '' };
+  draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '', pay: '' };
   persist();
   render();
 }
@@ -744,13 +776,14 @@ async function onClick(el) {
     case 'fx-add': {
       const amt = parseAmount(fx.input);
       if (!(amt > 0)) { toast('금액을 먼저 넣어 줘'); return; }
-      draft = { payer: draft.payer, desc: '', amount: String(amt), code: fx.code };
+      draft = { payer: draft.payer, desc: '', amount: String(amt), code: fx.code, forWho: '', pay: '' };
       editingId = null;
       state.ui.tab = 'settle'; persist(); render();
       break;
     }
     case 'draft-payer': draft.payer = d.payer; render(); break;
     case 'draft-for': draft.forWho = d.for || ''; render(); break;
+    case 'draft-pay': draft.pay = d.pay; render(); break;
     case 'paste-open': pasteBox = { text: '', items: [], skipped: [], warnings: [] }; render(); document.getElementById('paste-text')?.focus(); break;
     case 'paste-close': pasteBox = null; render(); break;
     case 'paste-preview': {
@@ -766,12 +799,12 @@ async function onClick(el) {
       toast(`${added}건 추가${failed.length ? ` · ${failed.length}건 실패` : ''}`); break;
     }
     case 'draft-save': saveDraft(); break;
-    case 'draft-cancel': editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '' }; render(); break;
+    case 'draft-cancel': editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '', pay: '' }; render(); break;
     case 'item-edit': {
       const it = activeTrip().items.find((x) => x.id === d.id);
       if (!it) return;
       editingId = it.id;
-      draft = { payer: it.payer, desc: it.desc, amount: String(it.amount), code: it.code, forWho: it.forWho || '' };
+      draft = { payer: it.payer, desc: it.desc, amount: String(it.amount), code: it.code, forWho: it.forWho || '', pay: it.pay || '' };
       render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       break;
@@ -779,8 +812,22 @@ async function onClick(el) {
     case 'item-delete': {
       const trip = activeTrip();
       trip.items = trip.items.filter((x) => x.id !== editingId);
-      editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '' };
+      editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '', pay: '' };
       persist(); render(); toast('삭제함'); break;
+    }
+    case 'cash-add': {
+      const person = /** @type {HTMLSelectElement} */ (document.getElementById('c-person')).value;
+      const code = /** @type {HTMLSelectElement} */ (document.getElementById('c-code')).value;
+      const amount = parseAmount(/** @type {HTMLInputElement} */ (document.getElementById('c-amount')).value);
+      if (!(amount > 0)) { toast('금액을 넣어 줘'); return; }
+      state.cash.push({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, person, code, amount, ts: Date.now(), note: '' });
+      persist(); render(); toast(`${person} ${fmt(amount, 2)} ${code} 넣음`); break;
+    }
+    case 'cash-del': {
+      const c = state.cash.find((x) => x.id === d.id);
+      if (!c || !window.confirm(`${c.person} ${fmt(c.amount, 2)} ${c.code} 을 지울까?`)) return;
+      state.cash = state.cash.filter((x) => x.id !== d.id);
+      persist(); render(); break;
     }
     case 'items-dedupe': {
       const trip = activeTrip();
@@ -891,7 +938,7 @@ async function onClick(el) {
     case 'reset': {
       if (!window.confirm('내역·설정을 전부 지울까? 되돌릴 수 없음')) return;
       Object.assign(state, defaultState());
-      persist(); draft = { payer: state.people[0], desc: '', amount: '', code: '' }; render(); break;
+      persist(); draft = { payer: state.people[0], desc: '', amount: '', code: '', forWho: '', pay: '' }; render(); break;
     }
     case 'app-update': {
       try {

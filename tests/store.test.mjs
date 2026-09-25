@@ -79,3 +79,20 @@ test('으뜸·서정 저장본은 으뜸이·서정이로 한 번만 바꿈', ()
   const again = mergeState(defaultState(), saved({ people: ['으뜸', '서정'], migrated: { mad92: true, names2: true, names3: true, names4: true } }));
   assert.deepEqual(again.people, ['으뜸', '서정']);
 });
+
+test('현금 지갑 기본값(으뜸이 3,850 MAD)과 입생로랑 660 카드 마이그레이션', () => {
+  const d = defaultState();
+  assert.deepEqual(d.cash.map((c) => [c.person, c.code, c.amount]), [['으뜸이', 'MAD', 3850]]);
+  const s = mergeState(defaultState(), saved({
+    people: ['으뜸이', '서정이'], migrated: { mad92: true, names2: true, names3: true, names4: true },
+    trips: [{ id: 't', name: '모로코', code: 'MAD', items: [{ id: 'a', payer: '으뜸이', desc: '입생로랑 박물관', amount: 660, code: 'MAD', krw: 97290 }, { id: 'b', payer: '으뜸이', desc: '물', amount: 7, code: 'MAD', krw: 1032 }] }],
+  }));
+  assert.equal(s.cash.length, 1);
+  assert.equal(s.cash[0].person, '으뜸이');
+  assert.equal(s.trips[0].items[0].pay, 'card');
+  assert.equal(s.trips[0].items[1].pay, undefined);
+  // 이미 지갑이 있으면 기본값을 덧붙이지 않음
+  const own = mergeState(defaultState(), saved({ cash: [{ id: 'x', person: '서정이', code: 'MAD', amount: 500 }] }));
+  assert.equal(own.cash.length, 1);
+  assert.equal(own.cash[0].amount, 500);
+});

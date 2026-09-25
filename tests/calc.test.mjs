@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError,
+  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances,
 } from '../calc.js';
 import { CURRENCIES, TRAVLOG_COUNT, currencyInfo } from '../currencies.js';
 
@@ -172,4 +172,30 @@ test('트래블로그 앱 값(manual.travlog)은 고시보다 우선, 수동 원
   // 0 이나 음수는 무시
   const c3 = { rates, manual: { travlog: { USD: 0 } } };
   assert.notEqual(krwPerUnit('USD', c3).source, 'travlog');
+});
+
+test('결제 수단 기본값: MAD 는 현금, USD·EUR·KRW 는 카드. 저장값이 있으면 그것', () => {
+  assert.equal(payMethod({ code: 'MAD' }), 'cash');
+  assert.equal(payMethod({ code: 'USD' }), 'card');
+  assert.equal(payMethod({ code: 'KRW' }), 'card');
+  assert.equal(payMethod({ code: 'MAD', pay: 'card' }), 'card');
+  assert.equal(payMethod({ code: 'USD', pay: 'cash' }), 'cash');
+});
+
+test('현금 지갑: 환전 3,850 − 현금으로 낸 MAD(카드 결제 660 제외) = 남은 현금', () => {
+  const items = [
+    { payer: '으뜸이', amount: 100, code: 'MAD' },
+    { payer: '으뜸이', amount: 660, code: 'MAD', pay: 'card' },
+    { payer: '으뜸이', amount: 191, code: 'USD' },
+    { payer: '서정이', amount: 97.6, code: 'MAD' },
+    { payer: '으뜸이', amount: 42.5, code: 'MAD' },
+  ];
+  const b = cashBalances(items, [{ person: '으뜸이', code: 'MAD', amount: 3850 }]);
+  const mine = b.find((w) => w.person === '으뜸이' && w.code === 'MAD');
+  assert.deepEqual({ topup: mine.topup, spent: mine.spent, remaining: mine.remaining, hasWallet: mine.hasWallet }, { topup: 3850, spent: 142.5, remaining: 3707.5, hasWallet: true });
+  // 지갑 없는 사람의 현금 지출은 음수로 드러남
+  const hers = b.find((w) => w.person === '서정이');
+  assert.deepEqual({ topup: hers.topup, spent: hers.spent, remaining: hers.remaining, hasWallet: hers.hasWallet }, { topup: 0, spent: 97.6, remaining: -97.6, hasWallet: false });
+  assert.equal(b[0].person, '으뜸이');
+  assert.throws(() => cashBalances(items, [{ person: 'x', code: 'MAD', amount: NaN }]), TypeError);
 });

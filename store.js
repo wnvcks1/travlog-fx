@@ -21,7 +21,9 @@ export function defaultState() {
     manual: { krw: {}, usdCross: { ...FIXED_CROSS } },
     // 하나머니 앱 화면에서 본 환율(1단위당 원화)과 입력한 날짜. 더 새 고시가 나오면 자동으로 안 씀
     travlog: { rates: {}, at: null },
-    migrated: { mad92: true, names2: true, names4: true },
+    // 현금 지갑에 넣은 돈(환전·ATM). 으뜸이가 처음 환전한 3,850 MAD 를 기본으로(Chan 2026-09-26)
+    cash: [{ id: 'cash1', person: '으뜸이', code: 'MAD', amount: 3850, ts: 0, note: '환전' }],
+    migrated: { mad92: true, names2: true, names4: true, cash1: true, ysl660: true },
     imports: [],
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
@@ -103,6 +105,18 @@ export function mergeState(base, saved) {
     out.migrated.names4 = true;
   }
   out.imports = Array.isArray(saved.imports) ? saved.imports : [];
+  out.cash = Array.isArray(saved.cash) ? saved.cash.filter((c) => c && typeof c === 'object') : [];
+  // 처음 한 번: 으뜸이 환전 3,850 MAD 지갑, 입생로랑 박물관 660 MAD 는 카드 결제(Chan 2026-09-26)
+  if (!out.migrated.cash1) {
+    if (out.cash.length === 0) out.cash = base.cash.map((c) => ({ ...c, person: out.people[0] }));
+    out.migrated.cash1 = true;
+  }
+  if (!out.migrated.ysl660) {
+    for (const t of out.trips || []) for (const it of t.items || []) {
+      if (it.code === 'MAD' && it.amount === 660 && /입생로랑/.test(it.desc || '') && !it.pay) it.pay = 'card';
+    }
+    out.migrated.ysl660 = true;
+  }
   const savedInit = Array.isArray(saved.initials) ? saved.initials : [];
   out.initials = out.people.map((p, i) => savedInit[i] || (p === base.people[i] ? base.initials[i] : chosung(p[0])));
   if (!Array.isArray(out.ratio) || out.ratio.length !== out.people.length) out.ratio = out.people.map(() => 1);

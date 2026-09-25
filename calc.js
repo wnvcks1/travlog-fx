@@ -159,6 +159,46 @@ export function refundLoss(amount, code, ctx, opts = {}) {
 }
 
 /**
+ * 항목의 결제 수단. 저장된 값이 없으면 트래블로그 미지원 통화(MAD 등)는 현금, 나머지는 카드로 본다.
+ * @param {{code:string, pay?:string}} item
+ * @returns {'cash'|'card'}
+ */
+export function payMethod(item) {
+  if (item.pay === 'cash' || item.pay === 'card') return item.pay;
+  if (item.code === 'KRW') return 'card';
+  return currencyInfo(item.code)?.travlog === 'none' ? 'cash' : 'card';
+}
+
+/**
+ * 사람·통화별 현금 지갑: 환전(넣은 돈) 합 − 그 사람이 현금으로 낸 항목 합 = 남은 현금.
+ * 지갑이 없는 사람·통화의 현금 지출은 topup 0 으로 잡혀 음수 잔액으로 드러남(숨기지 않음).
+ * @param {Array<{payer:string, amount:number, code:string, pay?:string}>} items
+ * @param {Array<{person:string, code:string, amount:number}>} cash 넣은 돈 목록
+ * @returns {Array<{person:string, code:string, topup:number, spent:number, remaining:number, hasWallet:boolean}>}
+ */
+export function cashBalances(items, cash) {
+  /** @type {Map<string, {person:string, code:string, topup:number, spent:number, hasWallet:boolean}>} */
+  const m = new Map();
+  const get = (person, code) => {
+    const k = `${person}\u0000${code}`;
+    if (!m.has(k)) m.set(k, { person, code, topup: 0, spent: 0, hasWallet: false });
+    return m.get(k);
+  };
+  for (const c of cash || []) {
+    assertAmount(c.amount, 'cash.amount');
+    const w = get(c.person, c.code);
+    w.topup += c.amount;
+    w.hasWallet = true;
+  }
+  for (const it of items || []) {
+    if (payMethod(it) !== 'cash') continue;
+    get(it.payer, it.code).spent += assertAmount(it.amount);
+  }
+  return [...m.values()].map((w) => ({ ...w, remaining: Math.round((w.topup - w.spent) * 100) / 100 }))
+    .sort((a, b) => Number(b.hasWallet) - Number(a.hasWallet) || a.person.localeCompare(b.person, 'ko') || a.code.localeCompare(b.code));
+}
+
+/**
  * 정산 항목의 원화 금액(정수). 저장된 스냅샷이 있으면 그것을 씀 — 나중에 환율이 바뀌어도 정산이 흔들리지 않게.
  * @param {{amount:number, code:string, krw?:number}} item
  * @param {object} ctx
