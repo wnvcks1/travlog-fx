@@ -140,3 +140,19 @@ test('fmt / ageHours', () => {
   assert.equal(ageHours(null), Infinity);
   assert.equal(ageHours({ asof: 'garbage' }), Infinity);
 });
+
+test('정산: 개인 몫(forWho) — 남이 대신 낸 개인 지출은 그 사람이 전액 부담', () => {
+  const people = ['주찬', '서정'];
+  const items = [
+    { payer: '서정', desc: '레드과일', amount: 35, code: 'KRW', forWho: '주찬' },
+    { payer: '주찬', desc: '타진', amount: 100, code: 'KRW' },
+  ];
+  const s = settle(items, people, ctx);
+  assert.equal(s.shared, 100);
+  assert.deepEqual(s.personal, { 주찬: 35, 서정: 0 });
+  assert.deepEqual(s.share, { 주찬: 85, 서정: 50 });
+  assert.deepEqual(s.paid, { 주찬: 100, 서정: 35 });
+  // 주찬 잔액 +15, 서정 −15 → 서정이 주찬에게 15
+  assert.deepEqual([s.transfers[0].from, s.transfers[0].to, s.transfers[0].krw], ['서정', '주찬', 15]);
+  assert.throws(() => settle([{ payer: '주찬', amount: 1, code: 'KRW', forWho: '누구' }], people, ctx), RangeError);
+});

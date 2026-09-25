@@ -3,7 +3,7 @@
    __BUILD__ 는 배포 스크립트가 빌드 시각으로 치환함. 치환 안 된 로컬에선 'dev'. */
 const BUILD = '__BUILD__';
 const CACHE = `travlog-${BUILD.startsWith('__') ? 'dev' : BUILD}`;
-const SHELL = ['./', './index.html', './app.js', './calc.js', './rates.js', './store.js', './currencies.js',
+const SHELL = ['./', './index.html', './app.js', './calc.js', './rates.js', './store.js', './currencies.js', './importer.js',
   './manifest.webmanifest', './icons/icon-192.png', './icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

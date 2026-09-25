@@ -157,7 +157,8 @@ export function itemKrw(item, ctx) {
 
 /**
  * 두 사람(이상) 정산. 사람별 낸 돈 → 비율대로 분담액 → 누가 누구에게 얼마.
- * @param {Array<{payer:string, amount:number, code:string, krw?:number}>} items
+ * forWho 가 있는 항목은 그 사람 몫 100%(남이 대신 낸 개인 지출). 없으면 비율대로 나눔.
+ * @param {Array<{payer:string, amount:number, code:string, krw?:number, forWho?:string}>} items
  * @param {string[]} people 이름 배열. payer 는 이 안에 있어야 함
  * @param {object} ctx
  * @param {number[]} [ratio] 분담 비율. 기본 균등
@@ -170,20 +171,28 @@ export function settle(items, people, ctx, ratio) {
   if (!(wsum > 0) || w.some((x) => !(x >= 0))) throw new TypeError('ratio 가 잘못됨');
 
   const paid = Object.fromEntries(people.map((p) => [p, 0]));
+  const personal = Object.fromEntries(people.map((p) => [p, 0]));
+  let shared = 0;
   for (const it of items) {
     if (!(it.payer in paid)) throw new RangeError(`모르는 사람: ${it.payer}`);
-    paid[it.payer] += itemKrw(it, ctx);
+    const krw = itemKrw(it, ctx);
+    paid[it.payer] += krw;
+    if (it.forWho) {
+      if (!(it.forWho in personal)) throw new RangeError(`모르는 사람: ${it.forWho}`);
+      personal[it.forWho] += krw;
+    } else shared += krw;
   }
   const total = Object.values(paid).reduce((a, b) => a + b, 0);
 
-  // 분담액은 정수로, 나머지 원 단위는 첫 사람에게 얹어 합계를 정확히 맞춤
+  // 공동 지출은 비율대로(정수, 나머지 원 단위는 첫 사람에게), 개인 지출은 그 사람 몫 그대로
   const share = {};
   let acc = 0;
   people.forEach((p, i) => {
-    share[p] = Math.floor((total * w[i]) / wsum);
+    share[p] = Math.floor((shared * w[i]) / wsum);
     acc += share[p];
   });
-  share[people[0]] += total - acc;
+  share[people[0]] += shared - acc;
+  for (const p of people) share[p] += personal[p];
 
   const balance = Object.fromEntries(people.map((p) => [p, paid[p] - share[p]]));
 
@@ -210,7 +219,7 @@ export function settle(items, people, ctx, ratio) {
     if (debtors[i].v === 0) i += 1;
     if (creditors[j].v === 0) j += 1;
   }
-  return { paid, share, balance, total, transfers, cadRate };
+  return { paid, share, balance, total, shared, personal, transfers, cadRate };
 }
 
 /**
