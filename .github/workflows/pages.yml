@@ -37,6 +37,8 @@ jobs:
           sed -i "s/__BUILD__/${GITHUB_RUN_NUMBER}/g" site/sw.js site/app.js
           head -c 300 site/data/rates.json; echo
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
