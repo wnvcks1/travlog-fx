@@ -455,7 +455,9 @@ function renderSettle() {
     // 메인은 실제로 낸 통화·금액(노션 메모 그대로). 원화·캐달은 환산값이라 작게
     const main = it.code === 'KRW' ? `${fmt(it.amount)}원` : `${ledgerAmount(it.amount, it.code)} ${esc(it.code)}`;
     const conv = it.code === 'KRW' ? `${cadOf(it.krw)} 캐달` : `${fmt(it.krw)}원 · ${cadOf(it.krw)} 캐달`;
-    return `<div class="item" data-action="item-edit" data-id="${esc(it.id)}">
+    // 낸 사람별 행 색: 첫 사람(으뜸이) 연한 파랑, 둘째(서정이) 연한 핑크
+    const pi = state.people.indexOf(it.payer);
+    return `<div class="item ${pi >= 0 ? `p${pi % 4}` : ''}" data-action="item-edit" data-id="${esc(it.id)}">
       <span class="who">${esc(it.payer)}</span>
       <div class="mid"><div class="desc">${esc(it.desc || '(내용 없음)')}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>
       <div class="amt"><b>${main}</b><small>${conv}</small></div>

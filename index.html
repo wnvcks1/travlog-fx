@@ -17,6 +17,7 @@
   --bg:#f6f7f9; --card:#ffffff; --text:#1a1a1a; --sub:#5b6470; --border:#e3e6ea;
   --accent:#0f5cad; --accent-text:#ffffff; --up:#c0392b; --down:#1a6fd4;
   --chip:#eef1f5; --chip-on:#0f5cad; --key:#ffffff; --key-press:#e6ebf2; --warn:#b7791f; --ok:#2e7d32;
+  --row-p0:#e3eefb; --row-p1:#fde4ee;
   --shadow:0 1px 2px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark){
@@ -24,6 +25,7 @@
     --bg:#15161a; --card:#1e2025; --text:#eaeaea; --sub:#9a9aa2; --border:#33343a;
     --accent:#4d8fe0; --accent-text:#0b1220; --up:#ff6b60; --down:#5b9bff;
     --chip:#26272c; --chip-on:#4d8fe0; --key:#23252b; --key-press:#2f323a; --warn:#e0a63a; --ok:#6cc070;
+    --row-p0:rgba(77,143,224,.20); --row-p1:rgba(255,105,160,.20);
     --shadow:none;
   }
 }
@@ -31,6 +33,7 @@
   --bg:#15161a; --card:#1e2025; --text:#eaeaea; --sub:#9a9aa2; --border:#33343a;
   --accent:#4d8fe0; --accent-text:#0b1220; --up:#ff6b60; --down:#5b9bff;
   --chip:#26272c; --chip-on:#4d8fe0; --key:#23252b; --key-press:#2f323a; --warn:#e0a63a; --ok:#6cc070;
+  --row-p0:rgba(77,143,224,.20); --row-p1:rgba(255,105,160,.20);
   --shadow:none;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
@@ -90,8 +93,14 @@ h2{font-size:.95rem;margin:0 0 8px;color:var(--sub);font-weight:600;}
 .payer button{flex:1;min-height:44px;border-radius:10px;background:var(--chip);font-weight:600;}
 .payer button.on{background:var(--accent);color:var(--accent-text);}
 .items{margin-top:6px;}
-.item{display:flex;gap:10px;align-items:center;padding:10px 4px;border-top:1px solid var(--border);}
+.item{display:flex;gap:10px;align-items:center;padding:10px 8px;border-top:1px solid var(--border);border-radius:10px;}
 .item:first-child{border-top:0;}
+/* 낸 사람별 행 색. p0 = 사람 1(으뜸이) 연한 파랑, p1 = 사람 2(서정이) 연한 핑크 */
+.item.p0{background:var(--row-p0);border-top-color:transparent;}
+.item.p1{background:var(--row-p1);border-top-color:transparent;}
+.item.p0 .who{background:rgba(77,143,224,.32);}
+.item.p1 .who{background:rgba(255,105,160,.32);}
+.item + .item{margin-top:4px;}
 .item .who{flex:0 0 auto;font-size:.78rem;background:var(--chip);border-radius:8px;padding:4px 8px;font-weight:600;}
 .item .mid{flex:1;min-width:0;}
 .item .desc{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
