@@ -47,9 +47,23 @@ test('옛 기본 이름(나·동행) 저장본은 으뜸·서정으로 바꾸고
 });
 
 test('사용자가 정한 이름은 그대로. 초성 없으면 이름 첫 글자 초성', () => {
-  const s = mergeState(defaultState(), saved({ people: ['주찬', '서정'] }));
-  assert.deepEqual(s.people, ['주찬', '서정']);
+  const s = mergeState(defaultState(), saved({ people: ['정우', '서정'] }));
+  assert.deepEqual(s.people, ['정우', '서정']);
   assert.deepEqual(s.initials, ['ㅈ', 'ㅅ']);
   const t = mergeState(defaultState(), saved({ people: ['민수', '서정'], initials: ['', 'ㅅ'] }));
   assert.deepEqual(t.initials, ['ㅁ', 'ㅅ']);
+});
+
+test("옛 링크가 넣은 '주찬'은 으뜸으로 한 번만 바꿈", () => {
+  const s = mergeState(defaultState(), saved({
+    people: ['주찬', '서정'],
+    trips: [{ id: 't', name: '모로코', code: 'MAD', items: [{ id: 'a', payer: '주찬', amount: 1, code: 'MAD', krw: 147 }, { id: 'b', payer: '서정', forWho: '주찬', amount: 1, code: 'MAD', krw: 147 }] }],
+  }));
+  assert.deepEqual(s.people, ['으뜸', '서정']);
+  assert.equal(s.trips[0].items[0].payer, '으뜸');
+  assert.equal(s.trips[0].items[1].forWho, '으뜸');
+  assert.equal(s.migrated.names3, true);
+  // 이미 처리된 저장본에서 사용자가 다시 주찬으로 바꾼 경우는 그대로
+  const again = mergeState(defaultState(), saved({ people: ['주찬', '서정'], migrated: { mad92: true, names2: true, names3: true } }));
+  assert.deepEqual(again.people, ['주찬', '서정']);
 });

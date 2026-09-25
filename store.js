@@ -20,6 +20,7 @@ export function defaultState() {
     // MAD 는 트래블로그 미지원 → USD 지갑 결제. Chan 실측 "USD 1 = 9.2 MAD" 를 기본 고정값으로 둠(설정에서 수정 가능)
     manual: { krw: {}, usdCross: { ...FIXED_CROSS } },
     migrated: { mad92: true, names2: true },
+    imports: [],
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
     ratesCache: null,
@@ -75,6 +76,18 @@ export function mergeState(base, saved) {
     }
     out.migrated.names2 = true;
   }
+  // 옛 가져오기 링크가 넣은 '주찬'도 으뜸으로(Chan 지시 2026-09-26). 한 번만
+  if (!out.migrated.names3) {
+    if (out.people[0] === '주찬') {
+      for (const t of out.trips || []) for (const it of t.items || []) {
+        if (it.payer === '주찬') it.payer = base.people[0];
+        if (it.forWho === '주찬') it.forWho = base.people[0];
+      }
+      out.people[0] = base.people[0];
+    }
+    out.migrated.names3 = true;
+  }
+  out.imports = Array.isArray(saved.imports) ? saved.imports : [];
   const savedInit = Array.isArray(saved.initials) ? saved.initials : [];
   out.initials = out.people.map((p, i) => savedInit[i] || (p === base.people[i] ? base.initials[i] : chosung(p[0])));
   if (!Array.isArray(out.ratio) || out.ratio.length !== out.people.length) out.ratio = out.people.map(() => 1);

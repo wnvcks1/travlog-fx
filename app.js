@@ -353,8 +353,12 @@ async function applyHashImport() {
   try { p = decodeImport(m[1]); } catch (e) { toast(`가져오기 링크 오류: ${e.message}`); return; }
   history.replaceState(null, '', location.pathname + location.search);
   const tripName = p.trip?.name || '여행';
-  if (!window.confirm(`${p.items.length}건을 '${tripName}' 정산에 추가할까?`)) return;
   const hasAny = state.trips.some((t) => t.items.length > 0);
+  // 같은 링크를 두 번 누르면 항목이 두 벌 들어감. 내역이 있을 때는 한 번 가져온 링크를 막음
+  const key = `${m[1].length}:${m[1].slice(0, 32)}:${m[1].slice(-32)}`;
+  if (state.imports.includes(key) && hasAny) { toast('이미 가져온 링크라 건너뜀. 다시 넣으려면 내역을 먼저 지울 것'); return; }
+  if (!window.confirm(`${p.items.length}건을 '${tripName}' 정산에 추가할까?`)) return;
+  state.imports = [...state.imports.filter((k) => k !== key), key].slice(-20);
   if (Array.isArray(p.people) && p.people.length === state.people.length && !hasAny) {
     state.people = [...p.people];
     draft.payer = state.people[0];
@@ -410,14 +414,20 @@ function renderSettle() {
 
   const rows = items.map((it) => {
     const i = currencyInfo(it.code);
+    const sub = [it.forWho ? `<b>${esc(it.forWho)} 개인</b>` : '', it.note ? esc(it.note) : ''].filter(Boolean).join(' · ');
+    // 메인은 실제로 낸 통화·금액(노션 메모 그대로). 원화·캐달은 환산값이라 작게
+    const main = it.code === 'KRW' ? `${fmt(it.amount)}원` : `${fmt(it.amount, i.dec)} ${esc(it.code)}`;
+    const conv = it.code === 'KRW' ? `${cadOf(it.krw)} 캐달` : `${fmt(it.krw)}원 · ${cadOf(it.krw)} 캐달`;
     return `<div class="item" data-action="item-edit" data-id="${esc(it.id)}">
       <span class="who">${esc(it.payer)}</span>
-      <div class="mid"><div class="desc">${esc(it.desc || '(내용 없음)')}</div>
-        <div class="sub">${fmt(it.amount, i.dec)} ${esc(it.code)}${it.code !== 'KRW' ? ` · 1 ${esc(it.code)} = ${fmt(it.rate, it.rate < 10 ? 3 : 2)}원` : ''}${it.forWho ? ` · <b>${esc(it.forWho)} 개인</b>` : ''}${it.note ? ` · ${esc(it.note)}` : ''}</div></div>
-      <div class="amt"><b>${fmt(it.krw)}원</b><small>${cadOf(it.krw)} 캐달</small></div>
+      <div class="mid"><div class="desc">${esc(it.desc || '(내용 없음)')}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>
+      <div class="amt"><b>${main}</b><small>${conv}</small></div>
     </div>`;
   }).join('');
-  const list = `<section class="card"><h2>내역 ${items.length}건</h2><div class="items">${rows || '<div class="empty">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div></section>`;
+  const dupes = duplicateCount(trip);
+  const dupeBtn = dupes ? `<div class="actions"><button class="btn sm danger" data-action="items-dedupe">같은 항목 ${dupes}건 중복 정리</button></div>` : '';
+  const clearBtn = items.length ? `<div class="actions"><button class="btn sm" data-action="items-clear">내역 전체 삭제</button></div>` : '';
+  const list = `<section class="card"><h2>내역 ${items.length}건</h2>${dupeBtn}<div class="items">${rows || '<div class="empty">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div>${clearBtn}</section>`;
 
   let summary;
   try {
@@ -437,8 +447,30 @@ function renderSettle() {
   } catch (e) {
     summary = `<div class="summary"><div class="err">정산 계산 실패: ${esc(e.message)}</div></div>`;
   }
-  return form + list + summary;
+  return form + summary + list;
 }
+
+/**
+ * 내용·낸 사람·금액·통화·몫이 완전히 같은 항목의 초과분 수(같은 링크를 두 번 눌렀을 때 등).
+ * @param {object} trip
+ * @returns {number}
+ */
+function duplicateCount(trip) {
+  const seen = new Set();
+  let n = 0;
+  for (const it of trip.items) {
+    const k = itemKey(it);
+    if (seen.has(k)) n += 1; else seen.add(k);
+  }
+  return n;
+}
+
+/**
+ * @param {object} it
+ * @returns {string}
+ */
+function itemKey(it) { return JSON.stringify([it.payer, (it.desc || '').trim(), it.amount, it.code, it.forWho || '']); }
+
 
 /**
  * 노션·카톡에 붙여 넣을 정산 요약 텍스트.
@@ -682,6 +714,19 @@ async function onClick(el) {
       editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '' };
       persist(); render(); toast('삭제함'); break;
     }
+    case 'items-dedupe': {
+      const trip = activeTrip();
+      const n = duplicateCount(trip);
+      if (!n || !window.confirm(`같은 내용·금액 항목 ${n}건을 지우고 한 벌만 남길까?`)) return;
+      const seen = new Set();
+      trip.items = [...trip.items].sort((a, b) => a.ts - b.ts).filter((it) => { const k = itemKey(it); if (seen.has(k)) return false; seen.add(k); return true; });
+      editingId = null; persist(); render(); toast(`${n}건 정리함`); break;
+    }
+    case 'items-clear': {
+      const trip = activeTrip();
+      if (!trip.items.length || !window.confirm(`"${trip.name}" 내역 ${trip.items.length}건을 전부 지울까? 되돌릴 수 없음.`)) return;
+      trip.items = []; editingId = null; persist(); render(); toast('내역을 비움'); break;
+    }
     case 'settle-copy': {
       try { toast((await copyText(summaryText())) ? '복사함. 노션·카톡에 붙여 넣기' : '복사 실패'); }
       catch (e) { toast(`복사 실패: ${e.message}`); }
@@ -850,6 +895,8 @@ window.addEventListener('beforeinstallprompt', (e) => {
 if (!draft.code) draft.code = activeTrip().code;
 render();
 refreshRates({ silent: true }).then(() => applyHashImport()).catch((e) => logger.error('환율 로딩 실패', e));
+// 앱이 이미 열려 있는 상태에서 가져오기 링크를 누르면 주소만 바뀌고 새로 안 뜸 → 그때도 처리
+window.addEventListener('hashchange', () => { applyHashImport().catch((e) => logger.error('가져오기 실패', e)); });
 
 // 자동 갱신: 화면에 돌아왔을 때(10분 지났으면), 온라인 복귀, 30분마다
 document.addEventListener('visibilitychange', () => {
