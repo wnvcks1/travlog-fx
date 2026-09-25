@@ -34,6 +34,10 @@
   --shadow:none;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+/* 숫자 버튼을 길게 누르면 크롬이 글자를 선택해 '탭하여 검색'을 띄움 → 입력칸 빼고 선택 자체를 막음 */
+body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+input,textarea{-webkit-user-select:text;user-select:text;}
+button{touch-action:manipulation;}
 html{margin:0;height:100%;}
 body{margin:0;min-height:100%;}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;line-height:1.45;font-size:16px;overflow-x:hidden;}

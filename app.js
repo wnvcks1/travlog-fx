@@ -227,7 +227,8 @@ function renderFx() {
       cards = targetsFor(code).map((t) => `<div class="res"><div class="lbl">${esc(t)}</div><div class="v">—</div></div>`).join('');
     } else throw e;
   }
-  const keys = ['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', 'back'];
+  // 전화기 배열: 1·2·3 이 맨 위
+  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'back'];
   const keypad = keys.map((k) => (k === 'back'
     ? '<button class="key fn" data-action="fx-key" data-key="back" aria-label="지우기">⌫</button>'
     : `<button class="key" data-action="fx-key" data-key="${k}">${k}</button>`)).join('');

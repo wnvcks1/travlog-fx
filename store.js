@@ -12,14 +12,14 @@ export const FIXED_CROSS = { MAD: 9.2 };
 export function defaultState() {
   return {
     version: 1,
-    people: ['으뜸', '서정'],
+    people: ['으뜸이', '서정이'],
     // 노션 메모 줄 맨 앞 초성 → 사람. Chan 메모는 ㅈ/ㅅ
     initials: ['ㅈ', 'ㅅ'],
     ratio: [1, 1],
     favorites: [...DEFAULT_FAVORITES],
     // MAD 는 트래블로그 미지원 → USD 지갑 결제. Chan 실측 "USD 1 = 9.2 MAD" 를 기본 고정값으로 둠(설정에서 수정 가능)
     manual: { krw: {}, usdCross: { ...FIXED_CROSS } },
-    migrated: { mad92: true, names2: true },
+    migrated: { mad92: true, names2: true, names4: true },
     imports: [],
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
@@ -86,6 +86,18 @@ export function mergeState(base, saved) {
       out.people[0] = base.people[0];
     }
     out.migrated.names3 = true;
+  }
+  // 으뜸·서정 → 으뜸이·서정이 (Chan 지시 2026-09-26). 한 번만
+  if (!out.migrated.names4) {
+    const map = { 으뜸: base.people[0], 서정: base.people[1] };
+    if (out.people.some((p) => map[p])) {
+      out.people = out.people.map((p) => map[p] || p);
+      for (const t of out.trips || []) for (const it of t.items || []) {
+        if (map[it.payer]) it.payer = map[it.payer];
+        if (it.forWho && map[it.forWho]) it.forWho = map[it.forWho];
+      }
+    }
+    out.migrated.names4 = true;
   }
   out.imports = Array.isArray(saved.imports) ? saved.imports : [];
   const savedInit = Array.isArray(saved.initials) ? saved.initials : [];
