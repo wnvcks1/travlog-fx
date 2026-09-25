@@ -36,8 +36,7 @@
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html{margin:0;height:100%;}
 body{margin:0;min-height:100%;}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;line-height:1.45;font-size:16px;
-  padding-bottom:calc(96px + env(safe-area-inset-bottom));overflow-x:hidden;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;line-height:1.45;font-size:16px;overflow-x:hidden;}
 button,input,select{font:inherit;color:inherit;}
 button{cursor:pointer;border:0;background:none;padding:0;}
 input,select{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;min-height:44px;width:100%;}
@@ -45,7 +44,8 @@ input:focus,select:focus{outline:2px solid var(--accent);outline-offset:0;}
 .top{position:sticky;top:0;z-index:5;background:var(--bg);padding:calc(10px + env(safe-area-inset-top)) 16px 8px;display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
 .top h1{font-size:1.15rem;margin:0;}
 .badge{font-size:.78rem;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:62vw;}
-main{padding:0 16px calc(96px + env(safe-area-inset-bottom));max-width:560px;margin:0 auto;}
+/* 아래 여백은 고정 탭바(60px) 를 가리지 않을 만큼만 */
+main{padding:0 16px calc(70px + env(safe-area-inset-bottom));max-width:560px;margin:0 auto;}
 section.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px;margin:10px 0;box-shadow:var(--shadow);}
 h2{font-size:.95rem;margin:0 0 8px;color:var(--sub);font-weight:600;}
 .chips{display:flex;gap:8px;overflow-x:auto;padding:6px 0 8px;scrollbar-width:none;}
