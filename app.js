@@ -328,7 +328,12 @@ async function applyHashImport() {
     for (const [code, v] of Object.entries(map)) if (!(state.manual[kind][code] > 0) && v > 0) state.manual[kind][code] = v;
   }
   let trip = state.trips.find((t) => t.name === tripName);
-  if (!trip) { newTrip(tripName, p.trip?.code || 'USD'); trip = activeTrip(); }
+  if (!trip) {
+    // 비어 있는 기본 여행('여행 1')이 있으면 새로 만들지 않고 그 자리를 씀
+    const empty = state.trips.find((t) => t.items.length === 0 && /^여행 \d+$/.test(t.name));
+    if (empty) { empty.name = tripName; empty.code = p.trip?.code || empty.code; trip = empty; }
+    else { newTrip(tripName, p.trip?.code || 'USD'); trip = activeTrip(); }
+  }
   state.activeTrip = trip.id;
   draft.code = trip.code;
   if (!rates) { await refreshRates({ silent: true }).catch(() => {}); }
