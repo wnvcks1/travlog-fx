@@ -7,6 +7,7 @@ import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashB
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport, encodeImport } from './importer.js';
+import { metaOf, buildPush, applyRemote, callSync, newRoomCode, normalizeCode } from './sync.js';
 
 const logger = {
   /** @param {...unknown} a */ info: (...a) => console.info('[travlog]', ...a),
@@ -68,7 +69,152 @@ function todayStr() {
 function ctx() {
   return { rates, manual: { ...state.manual, travlog: travlogActive() ? state.travlog.rates : {} } };
 }
-function persist() { if (!saveState(state)) logger.warn('localStorage 저장 실패'); }
+let lastMetaSig = JSON.stringify(metaOf(state));
+function persist() {
+  const sig = JSON.stringify(metaOf(state));
+  if (sig !== lastMetaSig) { state.sync.metaRev = Date.now(); lastMetaSig = sig; }
+  if (!saveState(state)) logger.warn('localStorage 저장 실패');
+  if (state.sync.code) scheduleSync();
+}
+
+/**
+ * 항목을 고쳤을 때 호출: 수정 시각(rev)과 아직 안 올라감(dirty) 표시.
+ * @param {object} it
+ */
+function touch(it) { it.rev = Date.now(); it.dirty = true; }
+
+/**
+ * 항목을 지울 때: 목록에서 빼고 삭제 기록을 남김(상대 폰에도 지워지게).
+ * @param {object} trip
+ * @param {(it:object) => boolean} pred 지울 조건
+ * @returns {number}
+ */
+function removeItems(trip, pred) {
+  const now = Date.now();
+  const gone = trip.items.filter(pred);
+  trip.items = trip.items.filter((it) => !pred(it));
+  if (state.sync.code) for (const it of gone) state.tombstones.push({ id: it.id, rev: now });
+  if (state.tombstones.length > 2000) state.tombstones = state.tombstones.slice(-2000);
+  return gone.length;
+}
+
+/* ───────────── 동기화 ───────────── */
+let syncTimer = 0;
+let syncRunning = false;
+let syncAgain = false;
+let syncError = '';
+
+/** 저장 뒤 2초 안에 몰아서 한 번 */
+function scheduleSync() {
+  clearTimeout(syncTimer);
+  syncTimer = window.setTimeout(() => { syncNow().catch(() => {}); }, 2000);
+}
+
+/**
+ * 서버와 한 번 맞춤. 올릴 것(dirty·삭제)을 보내고 방 전체를 받아 합침.
+ * @param {{all?:boolean, quiet?:boolean}} [opts] all: 전부 올림(방 만들 때)
+ * @returns {Promise<boolean>} 성공 여부
+ */
+async function syncNow(opts = {}) {
+  const code = state.sync.code;
+  if (!code) return false;
+  if (syncRunning) { syncAgain = true; return false; }
+  syncRunning = true;
+  try {
+    const push = buildPush(state, { all: !!opts.all });
+    const remote = await callSync({ code, meta: push.meta, meta_rev: push.meta_rev, items: push.items });
+    // 보낸 항목은 서버가 같은 rev 로 돌려주면 dirty 가 풀림. 삭제 기록은 서버에 들어갔으니 비움
+    const r = applyRemote(state, remote);
+    const sentIds = new Set(push.items.filter((i) => i.deleted).map((i) => i.id));
+    state.tombstones = state.tombstones.filter((tb) => !sentIds.has(tb.id));
+    state.sync.lastAt = Date.now();
+    if (remote.meta_rev >= (state.sync.metaRev || 0)) state.sync.metaRev = remote.meta_rev;
+    lastMetaSig = JSON.stringify(metaOf(state));
+    syncError = '';
+    saveState(state);
+    if (r.added || r.updated || r.removed || r.metaApplied) {
+      render();
+      if (!opts.quiet && (r.added || r.removed)) toast(`동기화: ${r.added ? `+${r.added}건 ` : ''}${r.removed ? `−${r.removed}건` : ''}`.trim());
+    } else if (state.ui.tab === 'settings') render();
+    return true;
+  } catch (e) {
+    syncError = e && e.name === 'AbortError' ? '시간 초과' : (e?.message || String(e));
+    logger.warn('동기화 실패', syncError);
+    if (state.ui.tab === 'settings') render();
+    return false;
+  } finally {
+    syncRunning = false;
+    if (syncAgain) { syncAgain = false; scheduleSync(); }
+  }
+}
+
+/**
+ * 방 만들기: 코드 생성, 이 폰 내용 전부 올림.
+ * @returns {Promise<void>}
+ */
+async function createRoom() {
+  const code = newRoomCode();
+  try {
+    const push = buildPush(state, { all: true });
+    const remote = await callSync({ code, meta: push.meta, meta_rev: push.meta_rev || Date.now(), items: push.items, create: true });
+    state.sync = { code, lastAt: Date.now(), metaRev: remote.meta_rev };
+    applyRemote(state, remote);
+    lastMetaSig = JSON.stringify(metaOf(state));
+    syncError = '';
+    saveState(state); render();
+    toast(`방 ${code} 만듦. 서정이 폰 설정에 이 코드를 넣으면 같이 씀`);
+  } catch (e) { toast(`방 만들기 실패: ${e.message}`); }
+}
+
+/**
+ * 방 코드로 연결. 방에 내용이 있고 이 폰에도 내역이 있으면 물어봄(방 내용으로 맞추기 / 합치기).
+ * @param {string} raw
+ * @param {{replace?:boolean|null}} [opts] replace 를 주면 묻지 않음
+ * @returns {Promise<boolean>}
+ */
+async function joinRoom(raw, opts = {}) {
+  const code = normalizeCode(raw);
+  if (!code) { toast('방 코드는 영문·숫자 6자'); return false; }
+  let remote;
+  try { remote = await callSync({ code, items: [] }); } catch (e) { toast(e.message); return false; }
+  const remoteLive = (remote.items || []).filter((i) => !i.deleted).length;
+  const localN = state.trips.reduce((n, t) => n + t.items.length, 0);
+  let replace = opts.replace ?? null;
+  if (replace === null && remoteLive && localN) {
+    replace = window.confirm(`방 ${code} 에 ${remoteLive}건이 있음. 이 폰의 ${localN}건을 버리고 방 내용으로 맞출까?\n(취소 = 둘 다 합침. 같은 내역이 두 번 들어갈 수 있음)`);
+  }
+  if (replace) {
+    for (const t of state.trips) t.items = [];
+    state.tombstones = [];
+    state.sync = { code, lastAt: 0, metaRev: 0 };
+    if (remote.meta && Array.isArray(remote.meta.trips)) {
+      // 방의 여행 목록으로 맞춤(비어 있는 로컬 여행은 버림)
+      state.trips = remote.meta.trips.map((rt) => ({ id: rt.id, name: rt.name, code: rt.code, items: [] }));
+      if (!state.trips.length) state.trips = defaultState().trips;
+    }
+  } else {
+    state.sync = { code, lastAt: 0, metaRev: state.sync.metaRev || 0 };
+    for (const t of state.trips) for (const it of t.items) touch(it);
+  }
+  applyRemote(state, remote);
+  if (!state.trips.some((t) => t.id === state.activeTrip)) state.activeTrip = state.trips[0].id;
+  draft.code = activeTrip().code;
+  lastMetaSig = JSON.stringify(metaOf(state));
+  state.sync.lastAt = Date.now();
+  saveState(state);
+  state.ui.tab = 'settle';
+  render();
+  toast(`방 ${code} 연결됨`);
+  if (!replace) scheduleSync();
+  return true;
+}
+
+/** @returns {number} 아직 안 올라간 항목 수 */
+function dirtyCount() {
+  let n = state.tombstones.length;
+  for (const t of state.trips) for (const it of t.items) if (it.dirty) n += 1;
+  return n;
+}
 
 /**
  * HTML 이스케이프.
@@ -344,7 +490,7 @@ function addItems(trip, list) {
     trip.items.push({
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}${added}`,
       ts: Date.now() + added, payer: it.payer, desc: it.desc, amount: it.amount, code: it.code,
-      krw: Math.round(it.amount * r.rate), rate: r.rate, source: r.source,
+      krw: Math.round(it.amount * r.rate), rate: r.rate, source: r.source, rev: Date.now() + added, dirty: true,
       ...(it.forWho ? { forWho: it.forWho } : {}), ...(it.note ? { note: it.note } : {}), ...(it.pay ? { pay: it.pay } : {}),
     });
     added += 1;
@@ -371,6 +517,7 @@ function resnapshotItems(code) {
       const krw = Math.round(it.amount * r.rate);
       if (krw === it.krw && it.source === r.source) continue;
       Object.assign(it, { krw, rate: r.rate, source: r.source });
+      touch(it);
       n += 1;
     }
   }
@@ -400,6 +547,12 @@ async function importFromText(text) {
   if (!/^[A-Za-z0-9_-]{8,}$/.test(enc)) { toast('공유 링크가 아님'); return false; }
   let p;
   try { p = decodeImport(enc); } catch (e) { toast(`가져오기 링크 오류: ${e.message}`); return false; }
+  // 방 코드가 든 링크: 항목을 복사하지 않고 그 방에 연결(둘이 같은 내용을 계속 같이 봄)
+  if (p.room && normalizeCode(p.room)) {
+    if (state.sync.code === normalizeCode(p.room)) { toast('이미 이 방에 연결돼 있음'); return false; }
+    if (!window.confirm(`방 ${normalizeCode(p.room)} 에 연결해서 같이 쓸까? 이 폰의 내역은 방 내용으로 맞춰짐.`)) return false;
+    return joinRoom(p.room, { replace: true });
+  }
   const tripName = p.trip?.name || '여행';
   const hasAny = state.trips.some((t) => t.items.length > 0);
   // 같은 링크를 두 번 누르면 항목이 두 벌 들어감. 내역이 있을 때는 한 번 가져온 링크를 막음
@@ -456,6 +609,7 @@ function buildShareLink() {
   const pi = (name) => Math.max(0, state.people.indexOf(name));
   const payload = {
     v: 1, trip: { name: trip.name, code: trip.code }, people: [...state.people],
+    ...(state.sync.code ? { room: state.sync.code } : {}),
     manual: { usdCross: { ...state.manual.usdCross } },
     ...(travlogActive() ? { travlog: { rates: { ...state.travlog.rates }, at: state.travlog.at } } : {}),
     cash: state.cash.map((c) => ({ p: pi(c.person), c: c.code, a: c.amount, ...(c.note ? { n: c.note } : {}) })),
@@ -639,13 +793,14 @@ function saveDraft() {
     if (draft.forWho) it.forWho = draft.forWho; else delete it.forWho;
     if (draft.pay) it.pay = draft.pay; else delete it.pay;
     if (changed) Object.assign(it, { krw: Math.round(amount * r.rate), rate: r.rate, source: r.source });
+    touch(it);
     editingId = null;
     toast('수정함');
   } else {
     trip.items.push({
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       ts: Date.now(), payer: draft.payer, desc: draft.desc.trim(), amount, code: draft.code,
-      krw: Math.round(amount * r.rate), rate: r.rate, source: r.source,
+      krw: Math.round(amount * r.rate), rate: r.rate, source: r.source, rev: Date.now(), dirty: true,
       ...(draft.forWho ? { forWho: draft.forWho } : {}), ...(draft.pay ? { pay: draft.pay } : {}),
     });
     toast(`추가함 · ${fmt(amount * r.rate)}원`);
@@ -724,6 +879,16 @@ function renderSettings() {
       <input id="m-val" inputmode="decimal" placeholder="9.2"></div>
     <div class="actions"><button class="btn primary" data-action="manual-add">수동 환율 저장</button></div>
     <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "USD 1 = 9.2 MAD".</p></section>
+  <section class="card"><h2>같이 쓰기 (두 폰 동기화)</h2>
+    ${state.sync.code ? `
+    <div class="line" style="display:flex;justify-content:space-between;align-items:center"><span>방 코드</span><span><b style="font-size:1.3rem;letter-spacing:.12em">${esc(state.sync.code)}</b></span></div>
+    <div class="muted" style="margin:4px 0">${state.sync.lastAt ? `마지막 동기화 ${esc(shortTime(new Date(state.sync.lastAt).toISOString()))}` : '아직 동기화 안 됨'}${dirtyCount() ? ` · 올릴 것 ${dirtyCount()}건` : ''}${syncError ? ` · <span class="warn">${esc(syncError)}</span>` : ' · <span class="ok">정상</span>'}</div>
+    <div class="actions"><button class="btn primary" data-action="sync-now">지금 동기화</button><button class="btn" data-action="sync-copy">코드 복사</button><button class="btn sm danger" data-action="sync-leave">나가기</button></div>
+    <p class="hint">저장할 때마다 몇 초 안에 올라가고, 앱을 열거나 화면에 돌아올 때·1분마다 받아옴. 인터넷이 없으면 폰에 두었다가 잡히면 올림. 정산 탭 "공유 링크"에도 이 코드가 들어가서 상대 폰은 링크만 넣으면 됨.</p>` : `
+    <p class="hint" style="margin:0 0 6px">한쪽 폰에서 방을 만들고, 다른 폰은 그 코드를 넣으면 내역·지갑·환율이 자동으로 같아짐. 무료(Supabase).</p>
+    <div class="actions"><button class="btn primary" data-action="sync-create">방 만들기 (이 폰 내용으로)</button></div>
+    <div class="row" style="margin-top:8px"><input id="sync-code" placeholder="방 코드 6자" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase"><button class="btn sm" data-action="sync-join">연결</button></div>`}
+  </section>
   <section class="card"><h2>공유 링크로 가져오기</h2>
     <p class="hint" style="margin:0 0 6px">다른 폰에서 만든 "공유 링크"를 여기 붙여 넣으면 정산 항목·현금 지갑·환율이 들어옴. 아이폰 홈 화면 앱은 링크를 눌러도 앱으로 안 열리니 이 칸을 쓸 것.</p>
     <textarea id="share-in" rows="3" style="width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:.85rem" placeholder="https://wnvcks1.github.io/travlog-fx/#import=…"></textarea>
@@ -860,7 +1025,7 @@ async function onClick(el) {
     }
     case 'item-delete': {
       const trip = activeTrip();
-      trip.items = trip.items.filter((x) => x.id !== editingId);
+      removeItems(trip, (x) => x.id === editingId);
       editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '', pay: '' };
       persist(); render(); toast('삭제함'); break;
     }
@@ -883,13 +1048,14 @@ async function onClick(el) {
       const n = duplicateCount(trip);
       if (!n || !window.confirm(`같은 내용·금액 항목 ${n}건을 지우고 한 벌만 남길까?`)) return;
       const seen = new Set();
-      trip.items = [...trip.items].sort((a, b) => a.ts - b.ts).filter((it) => { const k = itemKey(it); if (seen.has(k)) return false; seen.add(k); return true; });
+      const keep = new Set([...trip.items].sort((a, b) => a.ts - b.ts).filter((it) => { const k = itemKey(it); if (seen.has(k)) return false; seen.add(k); return true; }).map((it) => it.id));
+      removeItems(trip, (it) => !keep.has(it.id));
       editingId = null; persist(); render(); toast(`${n}건 정리함`); break;
     }
     case 'items-clear': {
       const trip = activeTrip();
-      if (!trip.items.length || !window.confirm(`"${trip.name}" 내역 ${trip.items.length}건을 전부 지울까? 되돌릴 수 없음.`)) return;
-      trip.items = []; editingId = null; persist(); render(); toast('내역을 비움'); break;
+      if (!trip.items.length || !window.confirm(`"${trip.name}" 내역 ${trip.items.length}건을 전부 지울까? 되돌릴 수 없음.${state.sync.code ? ' 같이 쓰는 폰에서도 지워짐.' : ''}`)) return;
+      removeItems(trip, () => true); editingId = null; persist(); render(); toast('내역을 비움'); break;
     }
     case 'settle-share': {
       const url = buildShareLink();
@@ -901,6 +1067,25 @@ async function onClick(el) {
       try { toast((await copyText(url)) ? `공유 링크 복사함 (${n}건). 카톡에 붙여 넣기` : '복사 실패'); }
       catch (e) { toast(`복사 실패: ${e.message}`); }
       break;
+    }
+    case 'sync-create': {
+      if (!window.confirm('이 폰 내용으로 방을 만들까? 상대 폰은 코드만 넣으면 됨.')) return;
+      await createRoom(); break;
+    }
+    case 'sync-join': {
+      const v = /** @type {HTMLInputElement} */ (document.getElementById('sync-code'))?.value || '';
+      await joinRoom(v); break;
+    }
+    case 'sync-now': { const ok = await syncNow(); toast(ok ? '동기화 완료' : `동기화 실패${syncError ? `: ${syncError}` : ''}`); render(); break; }
+    case 'sync-copy': {
+      try { toast((await copyText(state.sync.code)) ? `코드 ${state.sync.code} 복사함` : '복사 실패'); } catch (e) { toast(`복사 실패: ${e.message}`); }
+      break;
+    }
+    case 'sync-leave': {
+      if (!window.confirm(`방 ${state.sync.code} 에서 나갈까? 이 폰의 내역은 그대로 남고, 이후 변경은 서로 안 넘어감.`)) return;
+      state.sync = { code: '', lastAt: 0, metaRev: state.sync.metaRev }; state.tombstones = [];
+      for (const t of state.trips) for (const it of t.items) delete it.dirty;
+      saveState(state); render(); break;
     }
     case 'share-import': {
       const ta = /** @type {HTMLTextAreaElement} */ (document.getElementById('share-in'));
@@ -1038,7 +1223,10 @@ function onInput(el) {
       if (!nv || state.people.includes(nv)) return;
       state.people[i] = nv;
       if (draft.payer === old) draft.payer = nv;
-      for (const t of state.trips) for (const it of t.items) if (it.payer === old) it.payer = nv;
+      for (const t of state.trips) for (const it of t.items) {
+        if (it.payer === old) { it.payer = nv; touch(it); }
+        if (it.forWho === old) { it.forWho = nv; touch(it); }
+      }
       persist(); break;
     }
     case 'set-initial': { state.initials[Number(d.i)] = el.value.trim(); persist(); break; }
@@ -1100,16 +1288,19 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 if (!draft.code) draft.code = activeTrip().code;
 render();
-refreshRates({ silent: true }).then(() => applyHashImport()).catch((e) => logger.error('환율 로딩 실패', e));
+refreshRates({ silent: true }).then(() => applyHashImport()).then(() => syncNow({ quiet: true })).catch((e) => logger.error('환율 로딩 실패', e));
 // 앱이 이미 열려 있는 상태에서 가져오기 링크를 누르면 주소만 바뀌고 새로 안 뜸 → 그때도 처리
 window.addEventListener('hashchange', () => { applyHashImport().catch((e) => logger.error('가져오기 실패', e)); });
 
 // 자동 갱신: 화면에 돌아왔을 때(10분 지났으면), 온라인 복귀, 30분마다
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Date.now() - lastRefreshAt > 10 * 60 * 1000) refreshRates({ silent: true }).catch((e) => logger.warn(e));
+  if (document.hidden) return;
+  if (Date.now() - lastRefreshAt > 10 * 60 * 1000) refreshRates({ silent: true }).catch((e) => logger.warn(e));
+  if (state.sync.code) syncNow({ quiet: true }).catch(() => {});
 });
-window.addEventListener('online', () => { refreshRates({ silent: true }).catch((e) => logger.warn(e)); });
+window.addEventListener('online', () => { refreshRates({ silent: true }).catch((e) => logger.warn(e)); syncNow({ quiet: true }).catch(() => {}); });
 window.setInterval(() => { if (!document.hidden) refreshRates({ silent: true }).catch((e) => logger.warn(e)); }, 30 * 60 * 1000);
+window.setInterval(() => { if (!document.hidden && state.sync.code) syncNow({ quiet: true }).catch(() => {}); }, 60 * 1000);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   let reloading = false;

@@ -25,6 +25,9 @@ export function defaultState() {
     cash: [{ id: 'cash1', person: '으뜸이', code: 'MAD', amount: 3850, ts: 0, note: '환전' }],
     migrated: { mad92: true, names2: true, names4: true, cash1: true, ysl660: true },
     imports: [],
+    // 두 폰 동기화: 방 코드, 마지막 성공 시각, 메타 수정 시각. tombstones 는 지운 항목 기록(상대 폰에 전파)
+    sync: { code: '', lastAt: 0, metaRev: 0 },
+    tombstones: [],
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
     ratesCache: null,
@@ -105,6 +108,8 @@ export function mergeState(base, saved) {
     out.migrated.names4 = true;
   }
   out.imports = Array.isArray(saved.imports) ? saved.imports : [];
+  out.sync = { code: '', lastAt: 0, metaRev: 0, ...(saved.sync && typeof saved.sync === 'object' ? saved.sync : {}) };
+  out.tombstones = Array.isArray(saved.tombstones) ? saved.tombstones.filter((t) => t && typeof t.id === 'string') : [];
   out.cash = Array.isArray(saved.cash) ? saved.cash.filter((c) => c && typeof c === 'object') : [];
   // 처음 한 번: 으뜸이 환전 3,850 MAD 지갑, 입생로랑 박물관 660 MAD 는 카드 결제(Chan 2026-09-26)
   if (!out.migrated.cash1) {
