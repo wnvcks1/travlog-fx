@@ -76,7 +76,10 @@ h2{font-size:.95rem;margin:0 0 8px;color:var(--sub);font-weight:600;}
 .err{color:var(--up);font-size:.88rem;margin:6px 0;}
 .warn{color:var(--warn);}
 .ok{color:var(--ok);}
-.keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;}
+.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;}
+.key.plus{grid-row:span 3;background:var(--accent);color:var(--accent-text);font-size:1.9rem;}
+.key.zero{grid-column:span 2;}
+.expr{font-size:.85rem;color:var(--sub);text-align:right;padding:0 4px;min-height:1.2em;word-break:break-all;}
 .key{background:var(--key);border:1px solid var(--border);border-radius:12px;font-size:1.5rem;min-height:58px;font-weight:600;}
 .key:active{background:var(--key-press);}
 .key.fn{font-size:1.4rem;color:var(--sub);}
@@ -145,6 +148,7 @@ body.fx .chips{padding:2px 0 4px;gap:6px;}
 body.fx .chip{min-height:34px;padding:5px 12px;font-size:.88rem;}
 body.fx .muted{font-size:.78rem;}
 body.fx .amount{min-height:44px;padding:2px 4px 0;}
+body.fx .expr{font-size:.8rem;}
 body.fx .amount .num{font-size:2rem;}
 body.fx .results{gap:6px;margin:4px 0;}
 body.fx .res{padding:7px 10px;border-radius:10px;}

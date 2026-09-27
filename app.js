@@ -31,7 +31,11 @@ if (!state.migrated.mad92Items) {
   if (rates) { state.migrated.mad92Items = true; saveState(state); }
   if (n) console.info('[travlog] 고정 교차환율로 내역', n, '건 다시 계산');
 }
-const fx = { input: '', code: state.ui.code || 'MAD' };
+// terms: '+' 로 확정한 금액들. 변환은 항상 terms 합 + 지금 입력 중인 값(total) 기준
+const fx = { input: '', code: state.ui.code || 'MAD', terms: /** @type {number[]} */ ([]) };
+
+/** @returns {number} 키패드 총합 */
+function fxTotal() { return fx.terms.reduce((a, b) => a + b, 0) + parseAmount(fx.input); }
 /** @type {any} */
 let installEvt = null;
 /** @type {string|null} */
@@ -346,7 +350,7 @@ function targetsFor(code) {
 function renderFx() {
   const code = fx.code;
   const info = currencyInfo(code);
-  const amt = parseAmount(fx.input);
+  const amt = fxTotal();
   const favs = state.favorites.includes(code) ? state.favorites : [code, ...state.favorites];
   const chips = favs.map((c) => `<button class="chip ${c === code ? 'on' : ''}" data-action="fx-code" data-code="${esc(c)}">${esc(c)}</button>`).join('')
     + '<button class="chip more" data-action="fx-more">+ 통화</button>';
@@ -396,15 +400,21 @@ function renderFx() {
     } else throw e;
   }
   // 전화기 배열: 1·2·3 이 맨 위
-  const keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', 'back'];
-  const keypad = keys.map((k) => (k === 'back'
-    ? '<button class="key fn" data-action="fx-key" data-key="back" aria-label="지우기">⌫</button>'
-    : `<button class="key" data-action="fx-key" data-key="${k}">${k}</button>`)).join('');
+  // 4열: 1 2 3 ⌫ / 4 5 6 + / 7 8 9 + / . 0 0 +  (+ 는 세 줄, 0 은 두 칸)
+  const keys = ['1', '2', '3', 'back', '4', '5', '6', 'plus', '7', '8', '9', '.', '0'];
+  const keypad = keys.map((k) => {
+    if (k === 'back') return '<button class="key fn" data-action="fx-key" data-key="back" aria-label="지우기">⌫</button>';
+    if (k === 'plus') return '<button class="key plus" data-action="fx-key" data-key="+" aria-label="더하기">+</button>';
+    return `<button class="key${k === '0' ? ' zero' : ''}" data-action="fx-key" data-key="${k}">${k}</button>`;
+  }).join('');
+  const expr = fx.terms.length ? `<div class="expr">${esc([...fx.terms.map((t) => fmt(t, Number.isInteger(t) ? 0 : 2)), displayInput(fx.input)].join(' + '))} =</div>` : '';
+  const big = fx.terms.length ? fmt(amt, Number.isInteger(amt) ? 0 : 2) : displayInput(fx.input);
   return `
   <section class="card">
     <div class="chips">${chips}</div>
     <div class="muted">${esc(info.name)} 입력 ${travlogPill(code)}</div>
-    <div class="amount"><span class="num">${displayInput(fx.input)}</span><span class="unit">${esc(code === 'KRW' ? '원' : code)}</span></div>
+    ${expr}
+    <div class="amount"><span class="num">${big}</span><span class="unit">${esc(code === 'KRW' ? '원' : code)}</span></div>
     <div class="results">${cards}</div>
     ${err ? `<div class="err">${err}</div>` : `<div class="rateline">${lines.join('<br>')}</div>`}
     <div class="keypad">${keypad}</div>
@@ -970,29 +980,35 @@ async function onClick(el) {
   const d = el.dataset;
   switch (a) {
     // 통화를 바꾸면 입력값은 0부터(49 MAD 를 보다가 USD 를 누르면 49 USD 가 남지 않게)
-    case 'fx-code': if (fx.code !== d.code) fx.input = ''; fx.code = d.code; state.ui.code = fx.code; persist(); render(); break;
+    case 'fx-code': if (fx.code !== d.code) { fx.input = ''; fx.terms = []; } fx.code = d.code; state.ui.code = fx.code; persist(); render(); break;
     case 'fx-more': {
       const code = window.prompt('통화 코드(예: THB, INR, MAD)', fx.code);
       if (!code) return;
       const up = code.trim().toUpperCase();
       if (!/^[A-Z]{3}$/.test(up)) { toast('통화 코드는 영문 3자'); return; }
-      if (fx.code !== up) fx.input = '';
+      if (fx.code !== up) { fx.input = ''; fx.terms = []; }
       fx.code = up; state.ui.code = up;
       if (!state.favorites.includes(up)) state.favorites.unshift(up);
       persist(); render(); break;
     }
     case 'fx-key': {
       const k = d.key;
-      if (k === 'back') fx.input = fx.input.slice(0, -1);
-      else if (k === '.') { if (!fx.input.includes('.')) fx.input = (fx.input || '0') + '.'; }
+      if (k === 'back') {
+        // 입력 중인 값이 없으면 마지막 '+' 를 되돌림
+        if (fx.input) fx.input = fx.input.slice(0, -1);
+        else if (fx.terms.length) fx.input = String(fx.terms.pop());
+      } else if (k === '+') {
+        if (fx.input && parseAmount(fx.input) > 0 && fx.terms.length < 50) { fx.terms.push(parseAmount(fx.input)); fx.input = ''; }
+      } else if (k === '.') { if (!fx.input.includes('.')) fx.input = (fx.input || '0') + '.'; }
       else if (fx.input.replace('.', '').length < 12) fx.input = fx.input === '0' ? k : fx.input + k;
       render(); break;
     }
-    case 'fx-clear': fx.input = ''; render(); break;
+    case 'fx-clear': fx.input = ''; fx.terms = []; render(); break;
     case 'fx-add': {
-      const amt = parseAmount(fx.input);
+      const amt = Math.round(fxTotal() * 100) / 100;
       if (!(amt > 0)) { toast('금액을 먼저 넣어 줘'); return; }
       draft = { payer: draft.payer, desc: '', amount: String(amt), code: fx.code, forWho: '', pay: '' };
+      fx.input = ''; fx.terms = [];
       editingId = null;
       state.ui.tab = 'settle'; persist(); render();
       break;
