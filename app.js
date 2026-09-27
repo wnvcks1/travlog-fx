@@ -969,12 +969,14 @@ async function onClick(el) {
   const a = el.dataset.action;
   const d = el.dataset;
   switch (a) {
-    case 'fx-code': fx.code = d.code; state.ui.code = fx.code; persist(); render(); break;
+    // 통화를 바꾸면 입력값은 0부터(49 MAD 를 보다가 USD 를 누르면 49 USD 가 남지 않게)
+    case 'fx-code': if (fx.code !== d.code) fx.input = ''; fx.code = d.code; state.ui.code = fx.code; persist(); render(); break;
     case 'fx-more': {
       const code = window.prompt('통화 코드(예: THB, INR, MAD)', fx.code);
       if (!code) return;
       const up = code.trim().toUpperCase();
       if (!/^[A-Z]{3}$/.test(up)) { toast('통화 코드는 영문 3자'); return; }
+      if (fx.code !== up) fx.input = '';
       fx.code = up; state.ui.code = up;
       if (!state.favorites.includes(up)) state.favorites.unshift(up);
       persist(); render(); break;
