@@ -712,12 +712,13 @@ function renderCash(trip) {
       return `<div class="line"><span>${esc(w.person)} ${esc(w.code)} 현금 사용</span><span class="muted">${cf(w.spent)} ${esc(w.code)} · 넣은 돈 미입력</span></div>`;
     }
     const cls = w.remaining < 0 ? 'warn' : '';
+    // 둘째 줄은 식 그대로: 넣은 돈 − 현금 사용 = 남은 돈
     return `<div class="line"><span>${esc(w.person)} ${esc(w.code)} 남은 현금</span><span class="${cls}"><b>${cf(w.remaining)} ${esc(w.code)}</b> <small class="muted">${esc(krwOf(w.remaining, w.code))}</small></span></div>
-      <div class="line"><span class="muted" style="padding-left:12px">넣은 돈 ${cf(w.topup)} − 현금 사용 ${cf(w.spent)}</span><span></span></div>`;
+      <div class="line formula"><span class="muted">넣은 돈 ${cf(w.topup)} − 현금 사용 ${cf(w.spent)} = <b class="${cls}">남은 ${cf(w.remaining)} ${esc(w.code)}</b></span></div>`;
   }).join('') || '<div class="empty">아직 없음. 환전한 현금을 아래에 넣으면 정산 내역 중 현금 결제분이 빠져나간 잔액이 보임.</div>';
   const list = state.cash.map((c) => `<div class="kv"><span>${esc(c.person)} · ${cf(c.amount)} ${esc(c.code)}${c.note ? ` · ${esc(c.note)}` : ''}</span><button class="del" data-action="cash-del" data-id="${esc(c.id)}">삭제</button></div>`).join('');
   const personSel = `<select id="c-person" style="flex:0 0 30%">${state.people.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>`;
-  return `<section class="card"><h2>현금 지갑</h2>${rows}
+  return `<section class="card cash"><h2>현금 지갑</h2>${rows}
     <div class="hint" style="margin:6px 0">${list ? '넣은 돈:' : ''}</div>${list}
     <div class="row" style="margin-top:8px">${personSel}<input id="c-amount" inputmode="decimal" placeholder="환전 금액" autocomplete="off"><select id="c-code" style="flex:0 0 34%">${currencyOptions(trip.code)}</select></div>
     <div class="actions"><button class="btn primary" data-action="cash-add">현금 넣기</button></div>
