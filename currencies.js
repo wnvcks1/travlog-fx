@@ -92,6 +92,39 @@ export const DEFAULT_FAVORITES = ['MAD', 'EUR', 'USD', 'KRW', 'CAD', 'JPY'];
  * @param {string} code ISO 4217
  * @returns {Currency}
  */
+/**
+ * 코드·이름·나라·도시로 통화 찾기. "CNY", "위안", "중국", "상하이 여행", "엔" → 코드. 모르면 null.
+ * 순서: 코드 → 통화 이름 정확히 → 도시·나라 별칭 → 테이블의 나라 이름 → 화폐 단위 이름.
+ * @param {string} text
+ * @returns {string|null}
+ */
+export function findCurrency(text) {
+  const t = String(text || '').trim();
+  if (!t) return null;
+  const up = t.toUpperCase();
+  if (/^[A-Z]{3}$/.test(up)) return BY_CODE[up] ? up : null;
+  const exact = CURRENCIES.find((c) => c.name === t || c.name.replace(/\s/g, '') === t.replace(/\s/g, ''));
+  if (exact) return exact.code;
+  for (const [k, code] of PLACE_ALIASES) if (t.includes(k)) return code;
+  // 인도네시아가 인도보다 먼저 나오도록 테이블 순서 그대로 봄
+  for (const c of CURRENCIES) { const country = c.name.split(' ')[0]; if (c.name.includes(' ') && t.includes(country)) return c.code; }
+  for (const [k, code] of UNIT_ALIASES) if (t.includes(k)) return code;
+  return null;
+}
+
+/** 도시·나라 별칭(테이블 이름에 없는 것) */
+const PLACE_ALIASES = [
+  ['상하이', 'CNY'], ['상해', 'CNY'], ['베이징', 'CNY'], ['북경', 'CNY'], ['광저우', 'CNY'], ['청두', 'CNY'], ['시안', 'CNY'], ['칭다오', 'CNY'], ['장가계', 'CNY'],
+  ['도쿄', 'JPY'], ['오사카', 'JPY'], ['교토', 'JPY'], ['후쿠오카', 'JPY'], ['삿포로', 'JPY'], ['나고야', 'JPY'], ['오키나와', 'JPY'], ['다카야마', 'JPY'], ['가나자와', 'JPY'],
+  ['타이베이', 'TWD'], ['타이완', 'TWD'], ['방콕', 'THB'], ['치앙마이', 'THB'], ['푸켓', 'THB'],
+  ['다낭', 'VND'], ['하노이', 'VND'], ['호치민', 'VND'], ['나트랑', 'VND'], ['푸꾸옥', 'VND'], ['세부', 'PHP'], ['보라카이', 'PHP'], ['발리', 'IDR'],
+  ['마라케시', 'MAD'], ['카사블랑카', 'MAD'], ['페즈', 'MAD'], ['토론토', 'CAD'], ['밴쿠버', 'CAD'], ['뉴욕', 'USD'], ['하와이', 'USD'], ['괌', 'USD'], ['사이판', 'USD'],
+  ['런던', 'GBP'], ['터키', 'TRY'], ['이스탄불', 'TRY'],
+  ['파리', 'EUR'], ['프랑스', 'EUR'], ['스페인', 'EUR'], ['이탈리아', 'EUR'], ['독일', 'EUR'], ['포르투갈', 'EUR'], ['그리스', 'EUR'], ['오스트리아', 'EUR'], ['네덜란드', 'EUR'], ['벨기에', 'EUR'], ['크로아티아', 'EUR'], ['유럽', 'EUR'],
+];
+/** 화폐 단위 이름(나라 없이) */
+const UNIT_ALIASES = [['위안', 'CNY'], ['엔', 'JPY'], ['캐달', 'CAD'], ['유로', 'EUR'], ['바트', 'THB'], ['다르함', 'MAD'], ['디르함', 'MAD'], ['파운드', 'GBP'], ['달러', 'USD'], ['불', 'USD']];
+
 export function currencyInfo(code) {
   const c = BY_CODE[code];
   if (c) return c;

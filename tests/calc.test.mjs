@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances,
 } from '../calc.js';
-import { CURRENCIES, TRAVLOG_COUNT, currencyInfo } from '../currencies.js';
+import { CURRENCIES, TRAVLOG_COUNT, currencyInfo, findCurrency } from '../currencies.js';
 
 const rates = {
   source: 'hana',
@@ -198,4 +198,14 @@ test('현금 지갑: 환전 3,850 − 현금으로 낸 MAD(카드 결제 660 제
   assert.deepEqual({ topup: hers.topup, spent: hers.spent, remaining: hers.remaining, hasWallet: hers.hasWallet }, { topup: 0, spent: 97.6, remaining: -97.6, hasWallet: false });
   assert.equal(b[0].person, '으뜸이');
   assert.throws(() => cashBalances(items, [{ person: 'x', code: 'MAD', amount: NaN }]), TypeError);
+});
+
+test('findCurrency: 코드·이름·나라·도시·단위로 통화 찾기', () => {
+  const cases = { CNY: 'CNY', cny: 'CNY', 위안: 'CNY', 중국: 'CNY', '중국 여행': 'CNY', 상하이: 'CNY', '중국 위안': 'CNY',
+    엔: 'JPY', 일본: 'JPY', 다카야마: 'JPY', 다낭: 'VND', 인도네시아: 'IDR', 인도: 'INR', '호주달러': 'AUD', '캐나다 달러': 'CAD',
+    모로코: 'MAD', 다르함: 'MAD', 파리: 'EUR', 달러: 'USD', 대만: 'TWD' };
+  for (const [k, v] of Object.entries(cases)) assert.equal(findCurrency(k), v, k);
+  assert.equal(findCurrency('XYZ'), null);
+  assert.equal(findCurrency(''), null);
+  assert.equal(findCurrency('어딘가'), null);
 });

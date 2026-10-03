@@ -2,7 +2,7 @@
  * 트래블로그 환율·정산 PWA UI. 빌드 없이 브라우저 ES module 로 바로 실행.
  * 상태는 store.js(localStorage), 계산은 calc.js, 환율 로딩은 rates.js.
  */
-import { CURRENCIES, currencyInfo } from './currencies.js';
+import { CURRENCIES, currencyInfo, findCurrency } from './currencies.js';
 import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
@@ -31,8 +31,29 @@ if (!state.migrated.mad92Items) {
   if (rates) { state.migrated.mad92Items = true; saveState(state); }
   if (n) console.info('[travlog] 고정 교차환율로 내역', n, '건 다시 계산');
 }
+/**
+ * 환율 탭 기본 통화: 지금 여행의 통화(중국 여행이면 CNY). 원화 여행이거나 모르는 코드면 마지막에 고른 칩.
+ * @returns {string}
+ */
+function tripFxCode() {
+  const c = activeTrip()?.code;
+  return c && c !== 'KRW' && findCurrency(c) === c ? c : (state.ui.code || 'MAD');
+}
+
+/**
+ * 여행 통화가 바뀌었을 때(동기화·설정) 아직 아무것도 안 친 입력칸만 새 통화로 따라가게.
+ * @param {string} prev 바뀌기 전 여행 통화
+ */
+function followTripCurrency(prev) {
+  const now = activeTrip().code;
+  if (now === prev) return;
+  if (!fx.input && !fx.terms.length && fx.code === prev) fx.code = tripFxCode();
+  if (!editingId && !draft.amount && !draft.desc && (draft.code === prev || !draft.code)) draft.code = now;
+}
+
 // terms: '+' 로 확정한 금액들. 변환은 항상 terms 합 + 지금 입력 중인 값(total) 기준
-const fx = { input: '', code: state.ui.code || 'MAD', terms: /** @type {number[]} */ ([]) };
+// 새로고침하면 여행 통화부터(Chan 2026-10-03: 중국 여행 중 USD 로 뜨던 문제)
+const fx = { input: '', code: tripFxCode(), terms: /** @type {number[]} */ ([]) };
 
 /** @returns {number} 키패드 총합 */
 function fxTotal() { return fx.terms.reduce((a, b) => a + b, 0) + parseAmount(fx.input); }
@@ -127,8 +148,10 @@ async function syncNow(opts = {}) {
   try {
     const push = buildPush(state, { all: !!opts.all });
     const remote = await callSync({ code, meta: push.meta, meta_rev: push.meta_rev, items: push.items });
+    const prevTripCode = activeTrip().code;
     // 보낸 항목은 서버가 같은 rev 로 돌려주면 dirty 가 풀림. 삭제 기록은 서버에 들어갔으니 비움
     const r = applyRemote(state, remote);
+    if (r.metaApplied) followTripCurrency(prevTripCode);
     const sentIds = new Set(push.items.filter((i) => i.deleted).map((i) => i.id));
     state.tombstones = state.tombstones.filter((tb) => !sentIds.has(tb.id));
     state.sync.lastAt = Date.now();
@@ -203,6 +226,7 @@ async function joinRoom(raw, opts = {}) {
   applyRemote(state, remote);
   if (!state.trips.some((t) => t.id === state.activeTrip)) state.activeTrip = state.trips[0].id;
   draft.code = activeTrip().code;
+  fx.code = tripFxCode(); fx.input = ''; fx.terms = [];
   lastMetaSig = JSON.stringify(metaOf(state));
   state.sync.lastAt = Date.now();
   saveState(state);
@@ -351,7 +375,9 @@ function renderFx() {
   const code = fx.code;
   const info = currencyInfo(code);
   const amt = fxTotal();
-  const favs = state.favorites.includes(code) ? state.favorites : [code, ...state.favorites];
+  const tripCode = activeTrip().code;
+  const base = [tripCode, ...state.favorites].filter((c, i, a) => c && a.indexOf(c) === i);
+  const favs = base.includes(code) ? base : [code, ...base];
   const chips = favs.map((c) => `<button class="chip ${c === code ? 'on' : ''}" data-action="fx-code" data-code="${esc(c)}">${esc(c)}</button>`).join('')
     + '<button class="chip more" data-action="fx-more">+ 통화</button>';
   const unsupported = (c) => c !== 'KRW' && currencyInfo(c).travlog === 'none';
@@ -1118,10 +1144,16 @@ async function onClick(el) {
       break;
     }
     case 'trip-new': {
-      const name = window.prompt('여행 이름', '일본');
-      if (name === null) return;
-      const code = (window.prompt('기본 통화 코드', 'JPY') || 'USD').trim().toUpperCase();
-      newTrip(name, code); render(); break;
+      const name = window.prompt('여행 이름 (예: 중국, 일본, 다낭)', '');
+      if (name === null || !name.trim()) return;
+      // 이름으로 통화 추정(중국 → CNY). 비워 두거나 모르는 값이면 추정값, 추정도 안 되면 USD
+      const guess = findCurrency(name) || 'USD';
+      const raw = window.prompt('기본 통화 (코드나 이름. 예: CNY, 위안, JPY, 엔)', guess);
+      if (raw === null) return;
+      const code = findCurrency(raw) || guess;
+      newTrip(name, code);
+      fx.code = tripFxCode(); fx.input = ''; fx.terms = [];
+      render(); toast(`'${name.trim()}' 여행 · 기본 통화 ${code}. 설정 → 여행에서 바꿀 수 있음`); break;
     }
     case 'trip-delete': {
       const t = state.trips.find((x) => x.id === d.id);
@@ -1234,7 +1266,7 @@ function onInput(el) {
     case 'draft-desc': draft.desc = el.value; break;
     case 'draft-amount': draft.amount = el.value; break;
     case 'draft-code': draft.code = el.value; break;
-    case 'trip-select': state.activeTrip = el.value; draft.code = activeTrip().code; editingId = null; persist(); render(); break;
+    case 'trip-select': state.activeTrip = el.value; draft.code = activeTrip().code; editingId = null; fx.code = tripFxCode(); fx.input = ''; fx.terms = []; persist(); render(); break;
     case 'set-person': {
       const i = Number(d.i);
       const old = state.people[i];
@@ -1255,7 +1287,14 @@ function onInput(el) {
       break;
     }
     case 'trip-name': { const t = state.trips.find((x) => x.id === d.id); if (t) { t.name = el.value; persist(); } break; }
-    case 'trip-code': { const t = state.trips.find((x) => x.id === d.id); if (t) { t.code = el.value; persist(); } break; }
+    case 'trip-code': {
+      const t = state.trips.find((x) => x.id === d.id);
+      if (!t) break;
+      const prev = activeTrip().code;
+      t.code = el.value;
+      followTripCurrency(prev);
+      persist(); break;
+    }
     case 'set-fee': { const v = parseAmount(el.value); if (v >= 0) { state.settings.refundFeePct = v; persist(); } break; }
     case 'set-stale': { const v = parseAmount(el.value); if (v > 0) { state.settings.staleHours = v; persist(); } break; }
     case 'import-file': {
