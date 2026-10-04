@@ -10,7 +10,7 @@
  * 58종 중 2종은 미확인이라 테이블은 56종. 하나머니 앱 통화 목록과 대조해 틀리면 여기만 고치면 됨.
  */
 
-/** @typedef {{code:string,name:string,sym:string,dec:number,unit:number,travlog:'always'|'event'|'none',spread099?:boolean,ceilDisplay?:boolean}} Currency */
+/** @typedef {{code:string,name:string,sym:string,dec:number,unit:number,travlog:'always'|'event'|'none',spread099?:boolean,ceilDisplay?:boolean,defaultPay?:'cash'|'card'}} Currency */
 
 /** @type {Currency[]} */
 export const CURRENCIES = [
@@ -21,7 +21,8 @@ export const CURRENCIES = [
   { code: 'GBP', name: '영국 파운드', sym: '£', dec: 2, unit: 1, travlog: 'always' },
   // 이벤트 무료환전 (2026-12-31 까지)
   { code: 'CAD', name: '캐나다 달러', sym: 'C$', dec: 2, unit: 1, travlog: 'event' },
-  { code: 'CNY', name: '중국 위안', sym: '¥', dec: 2, unit: 1, travlog: 'event' },
+  // defaultPay: 여행 결제 기본이 '자동'일 때 이 통화 항목은 현금(Chan 2026-10-05: 중국은 현금)
+  { code: 'CNY', name: '중국 위안', sym: '¥', dec: 2, unit: 1, travlog: 'event', defaultPay: 'cash' },
   { code: 'SGD', name: '싱가포르 달러', sym: 'S$', dec: 2, unit: 1, travlog: 'event' },
   { code: 'AUD', name: '호주 달러', sym: 'A$', dec: 2, unit: 1, travlog: 'event' },
   { code: 'VND', name: '베트남 동', sym: '₫', dec: 0, unit: 100, travlog: 'event' },

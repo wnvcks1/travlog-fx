@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay,
+  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay, withDay,
 } from '../calc.js';
 import { CURRENCIES, TRAVLOG_COUNT, currencyInfo, findCurrency } from '../currencies.js';
 
@@ -215,9 +215,11 @@ test('여행 기본 결제: 그 여행 통화 항목에만 적용, 항목에 저
   assert.equal(payMethod({ code: 'CNY' }, china), 'cash');
   assert.equal(payMethod({ code: 'CNY', pay: 'card' }, china), 'card');
   assert.equal(payMethod({ code: 'KRW' }, china), 'card');
-  assert.equal(payMethod({ code: 'CNY' }, { code: 'CNY' }), 'card');
-  assert.equal(payMethod({ code: 'CNY' }), 'card');
-  const b = cashBalances([{ payer: '으뜸이', amount: 48, code: 'CNY' }, { payer: '으뜸이', amount: 10, code: 'CNY', pay: 'card' }], [{ person: '으뜸이', code: 'CNY', amount: 1000 }], china);
+  assert.equal(payMethod({ code: 'CNY' }, { code: 'CNY' }), 'cash');
+  assert.equal(payMethod({ code: 'CNY' }), 'cash');
+  assert.equal(payMethod({ code: 'CNY' }, { code: 'CNY', pay: 'card' }), 'card');
+  assert.equal(payMethod({ code: 'JPY' }), 'card');
+  const b = cashBalances([{ payer: '으뜸이', amount: 48, code: 'CNY' }, { payer: '으뜸이', amount: 10, code: 'CNY', pay: 'card' }], [{ person: '으뜸이', code: 'CNY', amount: 1000 }], { code: 'CNY' });
   assert.equal(b[0].spent, 48);
   assert.equal(b[0].remaining, 952);
 });
@@ -238,4 +240,12 @@ test('groupByDay: 같은 날끼리 묶고 하루 합계(여행 통화·원화). 
   ]);
   assert.equal(groupByDay(items, 'CNY', 0, day)[0].local, null);
   assert.equal(groupByDay([{ amount: 1, code: 'CNY', krw: 200 }], 'CNY', 200, day)[0].day, '');
+});
+
+test('withDay: 날짜만 바꾸고 시각은 유지, 형식이 틀리면 그대로', () => {
+  const ts = new Date(2026, 9, 5, 0, 30, 15, 7).getTime();
+  const moved = new Date(withDay(ts, '2026-10-03'));
+  assert.deepEqual([moved.getFullYear(), moved.getMonth(), moved.getDate(), moved.getHours(), moved.getMinutes(), moved.getSeconds()], [2026, 9, 3, 0, 30, 15]);
+  assert.equal(withDay(ts, ''), ts);
+  assert.equal(withDay(ts, '10/03'), ts);
 });

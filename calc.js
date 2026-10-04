@@ -160,7 +160,7 @@ export function refundLoss(amount, code, ctx, opts = {}) {
 
 /**
  * 항목의 결제 수단. 우선순위: 항목에 저장된 값 > 여행 기본 결제(그 여행 통화로 낸 항목만) > 자동
- * (트래블로그 미지원 통화(MAD 등)는 현금, 나머지는 카드).
+ * (통화 테이블의 defaultPay(CNY 현금) → 트래블로그 미지원 통화(MAD 등)는 현금 → 나머지는 카드).
  * 여행 기본은 그 나라 돈에만 적용: 중국 여행 기본이 현금이어도 원화로 예약한 숙소는 카드로 봄.
  * @param {{code:string, pay?:string}} item
  * @param {{code?:string, pay?:string}|null} [trip]
@@ -170,7 +170,9 @@ export function payMethod(item, trip = null) {
   if (item.pay === 'cash' || item.pay === 'card') return item.pay;
   if (trip && (trip.pay === 'cash' || trip.pay === 'card') && item.code === trip.code) return trip.pay;
   if (item.code === 'KRW') return 'card';
-  return currencyInfo(item.code)?.travlog === 'none' ? 'cash' : 'card';
+  const info = currencyInfo(item.code);
+  if (info?.defaultPay) return info.defaultPay;
+  return info?.travlog === 'none' ? 'cash' : 'card';
 }
 
 /**
@@ -308,6 +310,20 @@ export function groupByDay(items, tripCode, tripRate, dayOf = localDay) {
   }
   for (const g of out) if (g.local !== null) g.local = Math.round(g.local * 100) / 100;
   return out;
+}
+
+/**
+ * ts 의 날짜만 day('YYYY-MM-DD', 폰 시간)로 바꾸고 시각은 그대로. 날짜를 고친 항목이 그날 안에서 원래 시각 순서를 지키게.
+ * day 형식이 아니면 ts 그대로.
+ * @param {number} ts ms
+ * @param {string} day
+ * @returns {number}
+ */
+export function withDay(ts, day) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day || ''));
+  if (!m) return ts;
+  const r = new Date(ts);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), r.getHours(), r.getMinutes(), r.getSeconds(), r.getMilliseconds()).getTime();
 }
 
 /**
