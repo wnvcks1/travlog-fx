@@ -73,3 +73,18 @@ test('applyRemote: 메타는 metaRev 가 클 때만 통째로. 여행 목록은 
   assert.equal(s.cash[0].amount, 500);
   assert.equal(s.travlog.rates.USD, 1359);
 });
+
+test('여행 기본 결제(pay)도 메타로 오가고, 옛 앱 메타(pay 없음)는 이 폰 값을 지움 없이 유지', () => {
+  const s = mk();
+  s.trips[0].pay = 'cash';
+  assert.equal(metaOf(s).trips[0].pay, 'cash');
+  delete s.trips[0].pay;
+  assert.equal(metaOf(s).trips[0].pay, 'auto');
+  s.trips[0].pay = 'cash';
+  applyRemote(s, { meta_rev: 20, meta: { ...metaOf(s), trips: [{ id: 'trip1', name: '중국', code: 'CNY' }] }, items: [] });
+  assert.equal(s.trips[0].pay, 'cash');
+  applyRemote(s, { meta_rev: 30, meta: { ...metaOf(s), trips: [{ id: 'trip1', name: '중국', code: 'CNY', pay: 'auto' }] }, items: [] });
+  assert.equal(s.trips[0].pay, undefined);
+  applyRemote(s, { meta_rev: 40, meta: { ...metaOf(s), trips: [{ id: 'trip1', name: '중국', code: 'CNY', pay: 'card' }] }, items: [] });
+  assert.equal(s.trips[0].pay, 'card');
+});

@@ -41,7 +41,8 @@ export function normalizeCode(s) {
 export function metaOf(state) {
   return {
     people: [...state.people], initials: [...(state.initials || [])], ratio: [...state.ratio],
-    trips: state.trips.map((t) => ({ id: t.id, name: t.name, code: t.code })),
+    // pay: 여행 기본 결제. 'auto' 로라도 늘 보내서, 키가 없는 옛 앱이 보낸 메타와 구별함
+    trips: state.trips.map((t) => ({ id: t.id, name: t.name, code: t.code, pay: t.pay === 'cash' || t.pay === 'card' ? t.pay : 'auto' })),
     cash: (state.cash || []).map((c) => ({ ...c })),
     manual: { krw: { ...(state.manual?.krw || {}) }, usdCross: { ...(state.manual?.usdCross || {}) } },
     travlog: { rates: { ...(state.travlog?.rates || {}) }, at: state.travlog?.at || null },
@@ -93,8 +94,10 @@ export function applyRemote(state, remote) {
     if (Array.isArray(rMeta.initials) && rMeta.initials.length === state.people.length) state.initials = [...rMeta.initials];
     if (Array.isArray(rMeta.ratio) && rMeta.ratio.length === state.people.length) state.ratio = [...rMeta.ratio];
     for (const rt of Array.isArray(rMeta.trips) ? rMeta.trips : []) {
-      const lt = state.trips.find((t) => t.id === rt.id);
-      if (lt) { lt.name = rt.name; lt.code = rt.code; } else state.trips.push({ id: rt.id, name: rt.name, code: rt.code, items: [] });
+      let lt = state.trips.find((t) => t.id === rt.id);
+      if (lt) { lt.name = rt.name; lt.code = rt.code; } else { lt = { id: rt.id, name: rt.name, code: rt.code, items: [] }; state.trips.push(lt); }
+      // 옛 앱이 보낸 메타엔 pay 가 없음 → 이 폰 값 유지
+      if ('pay' in rt) { if (rt.pay === 'cash' || rt.pay === 'card') lt.pay = rt.pay; else delete lt.pay; }
     }
     if (Array.isArray(rMeta.cash)) state.cash = rMeta.cash.map((c) => ({ ...c }));
     if (rMeta.manual) state.manual = { krw: { ...(rMeta.manual.krw || {}) }, usdCross: { ...(rMeta.manual.usdCross || {}) } };

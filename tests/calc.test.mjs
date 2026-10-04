@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances,
+  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay,
 } from '../calc.js';
 import { CURRENCIES, TRAVLOG_COUNT, currencyInfo, findCurrency } from '../currencies.js';
 
@@ -208,4 +208,34 @@ test('findCurrency: 코드·이름·나라·도시·단위로 통화 찾기', ()
   assert.equal(findCurrency('XYZ'), null);
   assert.equal(findCurrency(''), null);
   assert.equal(findCurrency('어딘가'), null);
+});
+
+test('여행 기본 결제: 그 여행 통화 항목에만 적용, 항목에 저장된 값이 우선', () => {
+  const china = { code: 'CNY', pay: 'cash' };
+  assert.equal(payMethod({ code: 'CNY' }, china), 'cash');
+  assert.equal(payMethod({ code: 'CNY', pay: 'card' }, china), 'card');
+  assert.equal(payMethod({ code: 'KRW' }, china), 'card');
+  assert.equal(payMethod({ code: 'CNY' }, { code: 'CNY' }), 'card');
+  assert.equal(payMethod({ code: 'CNY' }), 'card');
+  const b = cashBalances([{ payer: '으뜸이', amount: 48, code: 'CNY' }, { payer: '으뜸이', amount: 10, code: 'CNY', pay: 'card' }], [{ person: '으뜸이', code: 'CNY', amount: 1000 }], china);
+  assert.equal(b[0].spent, 48);
+  assert.equal(b[0].remaining, 952);
+});
+
+test('groupByDay: 같은 날끼리 묶고 하루 합계(여행 통화·원화). 다른 통화는 원화÷환율로', () => {
+  const day = (ts) => (ts >= 2000 ? '2026-10-04' : '2026-10-03');
+  const items = [
+    { ts: 2300, amount: 46.23, code: 'CNY', krw: 9324 },
+    { ts: 2100, amount: 1.5, code: 'CNY', krw: 303 },
+    { ts: 2000, amount: 20170, code: 'KRW', krw: 20170 },
+    { ts: 1500, amount: 48, code: 'CNY', krw: 9682 },
+    { ts: 1000, amount: 492, code: 'CNY', krw: 99236 },
+  ];
+  const g = groupByDay(items, 'CNY', 201.7, day);
+  assert.deepEqual(g.map((x) => [x.day, x.items.length, x.krw, x.local]), [
+    ['2026-10-04', 3, 29797, 147.73],
+    ['2026-10-03', 2, 108918, 540],
+  ]);
+  assert.equal(groupByDay(items, 'CNY', 0, day)[0].local, null);
+  assert.equal(groupByDay([{ amount: 1, code: 'CNY', krw: 200 }], 'CNY', 200, day)[0].day, '');
 });

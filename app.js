@@ -3,7 +3,7 @@
  * 상태는 store.js(localStorage), 계산은 calc.js, 환율 로딩은 rates.js.
  */
 import { CURRENCIES, currencyInfo, findCurrency } from './currencies.js';
-import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances } from './calc.js';
+import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport, encodeImport } from './importer.js';
@@ -466,6 +466,18 @@ function ledgerAmount(amount, code) {
 }
 
 /**
+ * 하루 합계 표시: 정수면 소수점 없이, 아니면 두 자리. MAD 처럼 올림 표시 통화는 올림.
+ * @param {number} amount
+ * @param {string} code
+ * @returns {string}
+ */
+function dayAmount(amount, code) {
+  if (currencyInfo(code).ceilDisplay) return fmt(Math.ceil(amount - 1e-9));
+  const r = Math.round(amount * 100) / 100;
+  return fmt(r, Number.isInteger(r) ? 0 : 2);
+}
+
+/**
  * 항목의 현재 CAD 환산(스냅샷 원화 ÷ 현재 CAD).
  * @param {number} krw
  * @returns {string}
@@ -669,7 +681,7 @@ function renderSettle() {
     <div class="row"><label>여행</label>${tripSel}<button class="btn sm" data-action="trip-new">새 여행</button></div>
     <div class="row"><label>낸 사람</label><div class="payer" style="flex:1">${payerBtns}</div></div>
     <div class="row"><label>몫</label><div class="payer" style="flex:1">${[['', '같이'], ...state.people.map((p) => [p, `${p} 개인`])].map(([v, l]) => `<button class="${(draft.forWho || '') === v ? 'on' : ''}" data-action="draft-for" data-for="${esc(v)}">${esc(l)}</button>`).join('')}</div></div>
-    <div class="row"><label>결제</label><div class="payer" style="flex:1">${[['cash', '현금'], ['card', '카드']].map(([v, l]) => `<button class="${payMethod({ code: draft.code, pay: draft.pay }) === v ? 'on' : ''}" data-action="draft-pay" data-pay="${v}">${l}</button>`).join('')}</div></div>
+    <div class="row"><label>결제</label><div class="payer" style="flex:1">${[['cash', '현금'], ['card', '카드']].map(([v, l]) => `<button class="${payMethod({ code: draft.code, pay: draft.pay }, trip) === v ? 'on' : ''}" data-action="draft-pay" data-pay="${v}">${l}</button>`).join('')}</div></div>
     <div class="row"><label>내용</label><input id="d-desc" data-action="draft-desc" value="${esc(draft.desc)}" placeholder="타진 + 민트티" autocomplete="off"></div>
     <div class="row"><label>금액</label><input id="d-amount" data-action="draft-amount" value="${esc(draft.amount)}" inputmode="decimal" placeholder="0" autocomplete="off">
       <select data-action="draft-code" style="flex:0 0 46%">${currencyOptions(draft.code)}</select></div>
@@ -681,9 +693,8 @@ function renderSettle() {
   </section>
   ${renderPasteBox()}`;
 
-  const rows = items.map((it) => {
-    const i = currencyInfo(it.code);
-    const payTag = it.pay && it.pay !== payMethod({ code: it.code }) ? `<b>${it.pay === 'card' ? '💳 카드' : '💵 현금'}</b>` : '';
+  const itemRow = (it) => {
+    const payTag = it.pay && it.pay !== payMethod({ code: it.code }, trip) ? `<b>${it.pay === 'card' ? '💳 카드' : '💵 현금'}</b>` : '';
     const sub = [payTag, it.forWho ? `<b>${esc(it.forWho)} 개인</b>` : '', it.note ? esc(it.note) : ''].filter(Boolean).join(' · ');
     // 메인은 실제로 낸 통화·금액(노션 메모 그대로). 원화·캐달은 환산값이라 작게
     const main = it.code === 'KRW' ? `${fmt(it.amount)}원` : `${ledgerAmount(it.amount, it.code)} ${esc(it.code)}`;
@@ -695,6 +706,20 @@ function renderSettle() {
       <div class="mid"><div class="desc">${esc(it.desc || '(내용 없음)')}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>
       <div class="amt"><b>${main}</b><small>${conv}</small></div>
     </div>`;
+  };
+  // 날짜별: 하루마다 "10월 4일 (토) · 73.73 CNY · 14,830원" 한 줄을 끼움
+  let tripRate = 0;
+  try { tripRate = trip.code === 'KRW' ? 1 : krwPerUnit(trip.code, ctx()).rate; } catch (e) { if (!(e instanceof RateMissingError)) throw e; }
+  const today = localDay(Date.now());
+  const wd = ['일', '월', '화', '수', '목', '금', '토'];
+  const rows = groupByDay(items, trip.code, tripRate).map((g) => {
+    let label = '날짜 없음';
+    if (g.day) {
+      const [y, m, dd] = g.day.split('-').map(Number);
+      label = `${m}월 ${dd}일 (${wd[new Date(y, m - 1, dd).getDay()]})${g.day === today ? ' · 오늘' : ''}`;
+    }
+    const local = trip.code !== 'KRW' && g.local !== null ? `<b>${dayAmount(g.local, trip.code)} ${esc(trip.code)}</b> · ` : '';
+    return `<div class="day"><span>${esc(label)}</span><span>${local}${fmt(g.krw)}원</span></div>${g.items.map(itemRow).join('')}`;
   }).join('');
   const dupes = duplicateCount(trip);
   const dupeBtn = dupes ? `<div class="actions"><button class="btn sm danger" data-action="items-dedupe">같은 항목 ${dupes}건 중복 정리</button></div>` : '';
@@ -728,7 +753,7 @@ function renderSettle() {
  * @returns {string}
  */
 function renderCash(trip) {
-  const bal = cashBalances(trip.items, state.cash);
+  const bal = cashBalances(trip.items, state.cash, trip);
   const krwOf = (amt, code) => { try { return `${fmt(amt * krwPerUnit(code, ctx()).rate)}원`; } catch { return ''; } };
   // 현금은 정수면 소수점 없이, 아니면 두 자리
   const cf = (x) => fmt(x, Number.isInteger(Math.round(x * 100) / 100) ? 0 : 2);
@@ -748,7 +773,7 @@ function renderCash(trip) {
     <div class="hint" style="margin:6px 0">${list ? '넣은 돈:' : ''}</div>${list}
     <div class="row" style="margin-top:8px">${personSel}<input id="c-amount" inputmode="decimal" placeholder="환전 금액" autocomplete="off"><select id="c-code" style="flex:0 0 34%">${currencyOptions(trip.code)}</select></div>
     <div class="actions"><button class="btn primary" data-action="cash-add">현금 넣기</button></div>
-    <p class="hint">항목마다 결제(현금/카드)를 정할 수 있음. 정하지 않으면 트래블로그 미지원 통화(MAD)는 현금, 나머지는 카드로 봄. 카드로 낸 MAD(예: 박물관 660)는 그 항목에서 카드로 바꿀 것.</p></section>`;
+    <p class="hint">항목마다 결제(현금/카드)를 정할 수 있음. 안 정하면 설정 → 여행의 "결제 기본"을 따름(그 여행 통화 항목만). 자동이면 MAD 는 현금, 나머지는 카드.</p></section>`;
 }
 
 /**
@@ -790,8 +815,8 @@ function summaryText() {
   const rl = codes.map((c) => { try { const r = krwPerUnit(c, ctx()); return `1 ${c}=${fmt(r.rate, r.rate < 10 ? 3 : 2)}원(${sourceLabel(r.source)})`; } catch { return `${c} 환율 없음`; } });
   try { const r = krwPerUnit('CAD', ctx()); rl.push(`1 CAD=${fmt(r.rate, 1)}원`); } catch { /* CAD 없으면 생략 */ }
   if (rl.length) out.push(`환율: ${rl.join(', ')}`);
-  for (const w of cashBalances(trip.items, state.cash)) if (w.hasWallet) out.push(`현금 ${w.person} ${w.code}: 넣은 돈 ${fmt(w.topup, 2)} − 사용 ${fmt(w.spent, 2)} = 남은 ${fmt(w.remaining, 2)}`);
-  out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${ledgerAmount(i.amount, i.code)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}${i.pay && i.pay !== payMethod({ code: i.code }) ? ` [${i.pay === 'card' ? '카드' : '현금'}]` : ''}`));
+  for (const w of cashBalances(trip.items, state.cash, trip)) if (w.hasWallet) out.push(`현금 ${w.person} ${w.code}: 넣은 돈 ${fmt(w.topup, 2)} − 사용 ${fmt(w.spent, 2)} = 남은 ${fmt(w.remaining, 2)}`);
+  out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${ledgerAmount(i.amount, i.code)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}${i.pay && i.pay !== payMethod({ code: i.code }, trip) ? ` [${i.pay === 'card' ? '카드' : '현금'}]` : ''}`));
   return out.join('\n');
 }
 
@@ -880,7 +905,10 @@ function travlogStatus() {
 /** @returns {string} */
 function renderSettings() {
   const people = state.people.map((p, i) => `<div class="row"><label>사람 ${i + 1}</label><input data-action="set-person" data-i="${i}" value="${esc(p)}"><input data-action="set-initial" data-i="${i}" value="${esc(state.initials[i] || '')}" style="flex:0 0 56px;text-align:center" aria-label="메모 초성" placeholder="초성"><input data-action="set-ratio" data-i="${i}" value="${esc(state.ratio[i])}" inputmode="decimal" style="flex:0 0 60px" aria-label="분담 비율"></div>`).join('');
-  const trips = state.trips.map((t) => `<div class="row"><input data-action="trip-name" data-id="${esc(t.id)}" value="${esc(t.name)}"><select data-action="trip-code" data-id="${esc(t.id)}" style="flex:0 0 44%">${currencyOptions(t.code)}</select><button class="btn sm danger" data-action="trip-delete" data-id="${esc(t.id)}">삭제</button></div>`).join('');
+  const payOpt = (t) => [['auto', '결제 기본: 자동'], ['cash', '결제 기본: 현금'], ['card', '결제 기본: 카드']]
+    .map(([v, l]) => `<option value="${v}" ${(t.pay || 'auto') === v ? 'selected' : ''}>${l}</option>`).join('');
+  const trips = state.trips.map((t) => `<div class="trip-set"><div class="row"><input data-action="trip-name" data-id="${esc(t.id)}" value="${esc(t.name)}"><button class="btn sm danger" data-action="trip-delete" data-id="${esc(t.id)}">삭제</button></div>
+    <div class="row"><select data-action="trip-code" data-id="${esc(t.id)}">${currencyOptions(t.code)}</select><select data-action="trip-pay" data-id="${esc(t.id)}">${payOpt(t)}</select></div></div>`).join('');
   const favChips = CURRENCIES.filter((c) => c.code !== 'KRW').map((c) => `<button class="chip ${state.favorites.includes(c.code) ? 'on' : ''}" data-action="fav-toggle" data-code="${esc(c.code)}">${esc(c.code)}</button>`).join('');
   const manualRows = [
     ...Object.entries(state.manual.krw).map(([c, v]) => `<div class="kv"><span>1 ${esc(c)} = ${fmt(v, 2)}원</span><button class="del" data-action="manual-del" data-kind="krw" data-code="${esc(c)}">삭제</button></div>`),
@@ -903,7 +931,7 @@ function renderSettings() {
 
   return `
   <section class="card"><h2>사람 · 메모 초성 · 분담 비율</h2>${people}<p class="hint">이름을 바꾸면 기존 내역의 이름도 같이 바뀜. 가운데는 노션 메모 줄 맨 앞 글자(ㅈ·ㅅ), 오른쪽은 분담 비율(1:1 이 균등).</p></section>
-  <section class="card"><h2>여행</h2>${trips}<div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
+  <section class="card"><h2>여행</h2>${trips}<p class="hint">결제 기본은 그 여행 통화로 낸 항목에만 적용. 자동 = 트래블로그 미지원 통화(MAD)는 현금, 나머지는 카드.</p><div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
   <section class="card"><h2>즐겨찾기 통화</h2><div class="chips" style="flex-wrap:wrap;overflow:visible">${favChips}</div></section>
   <section class="card"><h2>트래블로그 앱 환율 맞추기</h2>
     <p class="hint" style="margin:0 0 6px">하나머니 화면의 "USD 1 = 1,359원" 값을 그대로 넣으면 앱 전체(정산 내역 포함)가 그 환율로 계산됨. 더 새 고시가 나오면 자동으로 해제.</p>
@@ -1287,6 +1315,12 @@ function onInput(el) {
       break;
     }
     case 'trip-name': { const t = state.trips.find((x) => x.id === d.id); if (t) { t.name = el.value; persist(); } break; }
+    case 'trip-pay': {
+      const t = state.trips.find((x) => x.id === d.id);
+      if (!t) break;
+      if (el.value === 'cash' || el.value === 'card') t.pay = el.value; else delete t.pay;
+      persist(); break;
+    }
     case 'trip-code': {
       const t = state.trips.find((x) => x.id === d.id);
       if (!t) break;

@@ -159,12 +159,16 @@ export function refundLoss(amount, code, ctx, opts = {}) {
 }
 
 /**
- * 항목의 결제 수단. 저장된 값이 없으면 트래블로그 미지원 통화(MAD 등)는 현금, 나머지는 카드로 본다.
+ * 항목의 결제 수단. 우선순위: 항목에 저장된 값 > 여행 기본 결제(그 여행 통화로 낸 항목만) > 자동
+ * (트래블로그 미지원 통화(MAD 등)는 현금, 나머지는 카드).
+ * 여행 기본은 그 나라 돈에만 적용: 중국 여행 기본이 현금이어도 원화로 예약한 숙소는 카드로 봄.
  * @param {{code:string, pay?:string}} item
+ * @param {{code?:string, pay?:string}|null} [trip]
  * @returns {'cash'|'card'}
  */
-export function payMethod(item) {
+export function payMethod(item, trip = null) {
   if (item.pay === 'cash' || item.pay === 'card') return item.pay;
+  if (trip && (trip.pay === 'cash' || trip.pay === 'card') && item.code === trip.code) return trip.pay;
   if (item.code === 'KRW') return 'card';
   return currencyInfo(item.code)?.travlog === 'none' ? 'cash' : 'card';
 }
@@ -174,9 +178,10 @@ export function payMethod(item) {
  * 지갑이 없는 사람·통화의 현금 지출은 topup 0 으로 잡혀 음수 잔액으로 드러남(숨기지 않음).
  * @param {Array<{payer:string, amount:number, code:string, pay?:string}>} items
  * @param {Array<{person:string, code:string, amount:number}>} cash 넣은 돈 목록
+ * @param {{code?:string, pay?:string}|null} [trip] 여행 기본 결제를 따지려고
  * @returns {Array<{person:string, code:string, topup:number, spent:number, remaining:number, hasWallet:boolean}>}
  */
-export function cashBalances(items, cash) {
+export function cashBalances(items, cash, trip = null) {
   /** @type {Map<string, {person:string, code:string, topup:number, spent:number, hasWallet:boolean}>} */
   const m = new Map();
   const get = (person, code) => {
@@ -191,7 +196,7 @@ export function cashBalances(items, cash) {
     w.hasWallet = true;
   }
   for (const it of items || []) {
-    if (payMethod(it) !== 'cash') continue;
+    if (payMethod(it, trip) !== 'cash') continue;
     get(it.payer, it.code).spent += assertAmount(it.amount);
   }
   return [...m.values()].map((w) => ({ ...w, remaining: Math.round((w.topup - w.spent) * 100) / 100 }))
@@ -274,6 +279,45 @@ export function settle(items, people, ctx, ratio) {
     if (creditors[j].v === 0) j += 1;
   }
   return { paid, share, balance, total, shared, personal, transfers, cadRate };
+}
+
+/**
+ * 날짜별 묶음과 하루 합계. items 순서는 그대로 두고(보통 최신순) 같은 날끼리 묶음.
+ * local 은 여행 통화 합: 여행 통화로 낸 항목은 금액 그대로, 다른 통화는 원화 스냅샷 ÷ 여행 통화 환율.
+ * 여행 통화 환율이 없으면(rate 0) local 은 null.
+ * @param {Array<{ts?:number, amount:number, code:string, krw?:number}>} items
+ * @param {string} tripCode
+ * @param {number} tripRate 여행 통화 1단위당 원화
+ * @param {(ts:number) => string} [dayOf] ts → 'YYYY-MM-DD'(폰 시간). 테스트에서 바꿔 끼움
+ * @returns {Array<{day:string, items:object[], krw:number, local:number|null}>}
+ */
+export function groupByDay(items, tripCode, tripRate, dayOf = localDay) {
+  const out = [];
+  let cur = null;
+  for (const it of items) {
+    const day = Number.isFinite(it.ts) && it.ts > 0 ? dayOf(it.ts) : '';
+    if (!cur || cur.day !== day) { cur = { day, items: [], krw: 0, local: 0 }; out.push(cur); }
+    cur.items.push(it);
+    const krw = Number.isFinite(it.krw) ? it.krw : 0;
+    cur.krw += krw;
+    if (cur.local !== null) {
+      if (it.code === tripCode) cur.local += it.amount;
+      else if (tripRate > 0) cur.local += krw / tripRate;
+      else cur.local = null;
+    }
+  }
+  for (const g of out) if (g.local !== null) g.local = Math.round(g.local * 100) / 100;
+  return out;
+}
+
+/**
+ * @param {number} ts ms
+ * @returns {string} 폰 시간 기준 'YYYY-MM-DD'
+ */
+export function localDay(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 /**
