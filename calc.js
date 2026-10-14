@@ -313,6 +313,51 @@ export function groupByDay(items, tripCode, tripRate, dayOf = localDay) {
 }
 
 /**
+ * 중복 판정 키: 낸 사람·내용·금액·통화·몫이 같으면 같은 항목으로 봄.
+ * @param {object} it
+ * @returns {string}
+ */
+export function itemKey(it) { return JSON.stringify([it.payer, (it.desc || '').trim(), it.amount, it.code, it.forWho || '']); }
+
+/** 같은 날 이 시간 안에 또 들어온 같은 항목은 '두 번 눌린 것'으로 보고 지우기를 먼저 제안 */
+export const DOUBLE_TAP_MS = 10 * 60 * 1000;
+
+/**
+ * 같은 항목 묶음과 남길 것 제안. 사용자가 고르기 전 기본값:
+ * 묶음의 첫 항목은 남기고, 같은 날 10분 안에 또 들어온 것은 지우기, 다른 날이거나 한참 뒤면 남기기(따로 산 것일 수 있음).
+ * 예전에 '모두 남기기'로 확인한 항목(okIds)만으로 된 묶음은 빼고, 새로 하나 더 들어오면 다시 보여 줌.
+ * @param {object[]} items
+ * @param {Set<string>|string[]} [okIds] 중복 아님으로 확인한 항목 id
+ * @param {(ts:number) => string} [dayOf]
+ * @returns {{key:string, items:{it:object, keep:boolean, why:string}[]}[]} 첫 항목 시각 순
+ */
+export function duplicateGroups(items, okIds = new Set(), dayOf = localDay) {
+  const ok = okIds instanceof Set ? okIds : new Set(okIds);
+  const by = new Map();
+  for (const it of items) {
+    const k = itemKey(it);
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push(it);
+  }
+  const out = [];
+  for (const [key, list] of by) {
+    if (list.length < 2 || list.every((it) => ok.has(it.id))) continue;
+    const sorted = [...list].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const rows = sorted.map((it, i) => {
+      if (i === 0) return { it, keep: true, why: '처음 적은 것' };
+      const prev = sorted[i - 1];
+      const gap = (it.ts || 0) - (prev.ts || 0);
+      if (ok.has(it.id)) return { it, keep: true, why: '전에 남기기로 함' };
+      if (dayOf(it.ts || 0) !== dayOf(prev.ts || 0)) return { it, keep: true, why: '다른 날' };
+      if (gap <= DOUBLE_TAP_MS) return { it, keep: false, why: gap < 60e3 ? '바로 이어서 또 들어옴' : `${Math.round(gap / 60e3)}분 뒤 또 들어옴` };
+      return { it, keep: true, why: `같은 날 ${gap >= 3600e3 ? `${Math.round(gap / 3600e3)}시간` : `${Math.round(gap / 60e3)}분`} 뒤` };
+    });
+    out.push({ key, items: rows });
+  }
+  return out.sort((a, b) => (a.items[0].it.ts || 0) - (b.items[0].it.ts || 0));
+}
+
+/**
  * ts 의 날짜만 day('YYYY-MM-DD', 폰 시간)로 바꾸고 시각은 그대로. 날짜를 고친 항목이 그날 안에서 원래 시각 순서를 지키게.
  * day 형식이 아니면 ts 그대로.
  * @param {number} ts ms

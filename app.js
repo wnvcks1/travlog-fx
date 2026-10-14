@@ -3,7 +3,7 @@
  * 상태는 store.js(localStorage), 계산은 calc.js, 환율 로딩은 rates.js.
  */
 import { CURRENCIES, currencyInfo, findCurrency } from './currencies.js';
-import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay } from './calc.js';
+import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport, encodeImport } from './importer.js';
@@ -65,6 +65,8 @@ let editingId = null;
 let draft = { payer: state.people[0], desc: '', amount: '', code: '', forWho: '', pay: '', date: '' };
 /** @type {{text:string, items:any[], skipped:string[], warnings:string[]}|null} */
 let pasteBox = null;
+/** 중복 확인 창: null 이면 닫힘. keep = 남길 항목 id */
+let dedupe = null;
 
 const view = /** @type {HTMLElement} */ (document.getElementById('view'));
 const tabs = /** @type {HTMLElement} */ (document.getElementById('tabs'));
@@ -723,8 +725,8 @@ function renderSettle() {
     const local = trip.code !== 'KRW' && g.local !== null ? `<b>${dayAmount(g.local, trip.code)} ${esc(trip.code)}</b> · ` : '';
     return `<div class="day"><span>${esc(label)}</span><span>${local}${fmt(g.krw)}원</span></div>${g.items.map(itemRow).join('')}`;
   }).join('');
-  const dupes = duplicateCount(trip);
-  const dupeBtn = dupes ? `<div class="actions"><button class="btn sm danger" data-action="items-dedupe">같은 항목 ${dupes}건 중복 정리</button></div>` : '';
+  const groups = duplicateGroups(trip.items, state.dupOk);
+  const dupeBtn = groups.length ? `<div class="actions"><button class="btn sm danger" data-action="items-dedupe">같은 항목 ${groups.length}묶음 확인</button></div>` : '';
   const clearBtn = items.length ? `<div class="actions"><button class="btn sm" data-action="items-clear">내역 전체 삭제</button></div>` : '';
   const list = `<section class="card"><h2>내역 ${items.length}건</h2>${dupeBtn}<div class="items">${rows || '<div class="empty">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div>${clearBtn}</section>`;
 
@@ -746,7 +748,53 @@ function renderSettle() {
   } catch (e) {
     summary = `<div class="summary"><div class="err">정산 계산 실패: ${esc(e.message)}</div></div>`;
   }
-  return form + summary + renderCash(trip) + list;
+  return form + summary + renderCash(trip) + list + renderDedupe(trip);
+}
+
+/**
+ * 중복 확인 창. 같은 항목 묶음마다 언제 적었는지 보여 주고, 눌러서 남길지·지울지 고름.
+ * @param {object} trip
+ * @returns {string}
+ */
+function renderDedupe(trip) {
+  if (!dedupe) return '';
+  const groups = duplicateGroups(trip.items, state.dupOk);
+  const wd = ['일', '월', '화', '수', '목', '금', '토'];
+  const when = (ts) => {
+    if (!Number.isFinite(ts) || ts <= 0) return '날짜 없음';
+    const t = new Date(ts);
+    return `${t.getMonth() + 1}월 ${t.getDate()}일 (${wd[t.getDay()]}) ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  };
+  let gone = 0;
+  const body = groups.map((g, gi) => {
+    const first = g.items[0].it;
+    const main = first.code === 'KRW' ? `${fmt(first.amount)}원` : `${ledgerAmount(first.amount, first.code)} ${esc(first.code)}`;
+    const rows = g.items.map(({ it, why }) => {
+      const keep = dedupe.keep.has(it.id);
+      if (!keep) gone += 1;
+      const pay = payMethod(it, trip) === 'card' ? '💳 카드' : '💵 현금';
+      const sub = [esc(why), pay, it.note ? esc(it.note) : ''].filter(Boolean).join(' · ');
+      return `<button class="dup-row ${keep ? 'keep' : 'drop'}" data-action="dup-toggle" data-id="${esc(it.id)}">
+        <span class="mark">${keep ? '✓ 남김' : '✕ 지움'}</span>
+        <span class="mid"><b>${esc(when(it.ts))}</b><small>${sub}</small></span>
+      </button>`;
+    }).join('');
+    const kept = g.items.filter(({ it }) => dedupe.keep.has(it.id)).length;
+    return `<div class="dup-group">
+      <div class="dup-head"><span class="who">${esc(first.payer)}</span><b>${esc(first.desc || '(내용 없음)')}${first.forWho ? ` · ${esc(first.forWho)} 개인` : ''}</b><span>${main} × ${g.items.length}</span></div>
+      ${rows}
+      <div class="dup-quick">
+        <button class="btn sm ${kept === 1 ? 'on' : ''}" data-action="dup-one" data-g="${gi}">하나만 남기기</button>
+        <button class="btn sm ${kept === g.items.length ? 'on' : ''}" data-action="dup-all" data-g="${gi}">모두 남기기</button>
+      </div>
+    </div>`;
+  }).join('') || '<div class="empty">같은 항목 없음</div>';
+  return `<div class="sheet-bg" data-action="dup-cancel"><section class="sheet" role="dialog" aria-label="같은 항목 확인" data-action="dup-noop">
+    <h2>같은 항목 ${groups.length}묶음</h2>
+    <p class="hint" style="margin:0 0 8px">낸 사람·내용·금액·통화가 같은 항목. 줄을 눌러 남길지 지울지 고름. 같은 날 10분 안에 또 들어온 건 지움으로, 다른 날·한참 뒤에 적은 건 따로 산 것일 수 있어 남김으로 미리 골라 둠.</p>
+    <div class="sheet-body">${body}</div>
+    <div class="actions"><button class="btn" data-action="dup-cancel">취소</button><button class="btn primary" data-action="dup-apply">${gone ? `${gone}건 지우기` : '모두 남기기'}</button></div>
+  </section></div>`;
 }
 
 /**
@@ -778,26 +826,6 @@ function renderCash(trip) {
     <p class="hint">항목마다 결제(현금/카드)를 정할 수 있음. 안 정하면 설정 → 여행의 "결제 기본"을 따름(그 여행 통화 항목만). 자동이면 위안·디르함은 현금, 나머지는 카드.</p></section>`;
 }
 
-/**
- * 내용·낸 사람·금액·통화·몫이 완전히 같은 항목의 초과분 수(같은 링크를 두 번 눌렀을 때 등).
- * @param {object} trip
- * @returns {number}
- */
-function duplicateCount(trip) {
-  const seen = new Set();
-  let n = 0;
-  for (const it of trip.items) {
-    const k = itemKey(it);
-    if (seen.has(k)) n += 1; else seen.add(k);
-  }
-  return n;
-}
-
-/**
- * @param {object} it
- * @returns {string}
- */
-function itemKey(it) { return JSON.stringify([it.payer, (it.desc || '').trim(), it.amount, it.code, it.forWho || '']); }
 
 
 /**
@@ -1123,13 +1151,49 @@ async function onClick(el) {
       persist(); render(); break;
     }
     case 'items-dedupe': {
+      // 바로 지우지 않고 확인 창: 무엇이 같은지 보여 주고 남길 것을 고르게 함
+      const groups = duplicateGroups(activeTrip().items, state.dupOk);
+      if (!groups.length) return;
+      dedupe = { keep: new Set(groups.flatMap((g) => g.items.filter((r) => r.keep).map((r) => r.it.id))) };
+      render(); break;
+    }
+    case 'dup-toggle': {
+      if (!dedupe) return;
+      const g = duplicateGroups(activeTrip().items, state.dupOk).find((x) => x.items.some((r) => r.it.id === d.id));
+      if (!g) return;
+      if (dedupe.keep.has(d.id)) {
+        // 묶음에서 하나는 남아야 함 (전부 지우려면 항목을 눌러 따로 삭제)
+        if (g.items.filter((r) => dedupe.keep.has(r.it.id)).length <= 1) { toast('하나는 남겨야 함'); return; }
+        dedupe.keep.delete(d.id);
+      } else dedupe.keep.add(d.id);
+      render(); break;
+    }
+    case 'dup-one':
+    case 'dup-all': {
+      if (!dedupe) return;
+      const g = duplicateGroups(activeTrip().items, state.dupOk)[Number(d.g)];
+      if (!g) return;
+      g.items.forEach((r, i) => { if (a === 'dup-all' || i === 0) dedupe.keep.add(r.it.id); else dedupe.keep.delete(r.it.id); });
+      render(); break;
+    }
+    case 'dup-noop': break; // 창 안 빈 곳을 눌러도 배경(닫기)으로 안 넘어가게
+    case 'dup-cancel': dedupe = null; render(); break;
+    case 'dup-apply': {
+      if (!dedupe) return;
       const trip = activeTrip();
-      const n = duplicateCount(trip);
-      if (!n || !window.confirm(`같은 내용·금액 항목 ${n}건을 지우고 한 벌만 남길까?`)) return;
-      const seen = new Set();
-      const keep = new Set([...trip.items].sort((a, b) => a.ts - b.ts).filter((it) => { const k = itemKey(it); if (seen.has(k)) return false; seen.add(k); return true; }).map((it) => it.id));
-      removeItems(trip, (it) => !keep.has(it.id));
-      editingId = null; persist(); render(); toast(`${n}건 정리함`); break;
+      const groups = duplicateGroups(trip.items, state.dupOk);
+      const ids = new Set(groups.flatMap((g) => g.items.map((r) => r.it.id)));
+      const n = removeItems(trip, (it) => ids.has(it.id) && !dedupe.keep.has(it.id));
+      // 둘 이상 남긴 묶음은 '중복 아님'으로 기억 → 다음부터 안 물어봄 (새로 같은 게 또 들어오면 다시 물음)
+      let kept = 0;
+      for (const g of groups) {
+        const k = g.items.filter((r) => dedupe.keep.has(r.it.id)).map((r) => r.it.id);
+        if (k.length > 1) { state.dupOk.push(...k); kept += 1; }
+      }
+      state.dupOk = [...new Set(state.dupOk)].slice(-5000);
+      dedupe = null; editingId = null; persist(); render();
+      toast(n ? `${n}건 지움${kept ? ` · ${kept}묶음은 둘 다 남김` : ''}` : '모두 남김 · 다음부터 안 물어봄');
+      break;
     }
     case 'items-clear': {
       const trip = activeTrip();

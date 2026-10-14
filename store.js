@@ -28,6 +28,8 @@ export function defaultState() {
     // 두 폰 동기화: 방 코드, 마지막 성공 시각, 메타 수정 시각. tombstones 는 지운 항목 기록(상대 폰에 전파)
     sync: { code: '', lastAt: 0, metaRev: 0 },
     tombstones: [],
+    // 중복 확인에서 '모두 남기기'로 고른 항목 id (이 폰에만 저장, 같은 묶음을 다시 묻지 않음)
+    dupOk: [],
     trips: [{ id: 'trip1', name: '여행 1', code: 'MAD', items: [] }],
     activeTrip: 'trip1',
     ratesCache: null,

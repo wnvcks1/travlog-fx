@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay, withDay,
+  duplicateGroups, itemKey,
 } from '../calc.js';
 import { CURRENCIES, TRAVLOG_COUNT, currencyInfo, findCurrency } from '../currencies.js';
 
@@ -248,4 +249,44 @@ test('withDay: 날짜만 바꾸고 시각은 유지, 형식이 틀리면 그대�
   assert.deepEqual([moved.getFullYear(), moved.getMonth(), moved.getDate(), moved.getHours(), moved.getMinutes(), moved.getSeconds()], [2026, 9, 3, 0, 30, 15]);
   assert.equal(withDay(ts, ''), ts);
   assert.equal(withDay(ts, '10/03'), ts);
+});
+
+/* ───── 같은 항목 확인 ───── */
+const T0 = new Date(2026, 9, 12, 8, 31).getTime();
+const dupItem = (id, ts, extra = {}) => ({ id, ts, payer: '으뜸이', desc: '택시', amount: 8.41, code: 'CNY', ...extra });
+
+test('중복: 같은 날 1분 안에 또 들어온 건 지움 제안, 첫 항목은 남김', () => {
+  const g = duplicateGroups([dupItem('a', T0), dupItem('b', T0 + 20e3)]);
+  assert.equal(g.length, 1);
+  assert.deepEqual(g[0].items.map((r) => [r.it.id, r.keep, r.why]), [['a', true, '처음 적은 것'], ['b', false, '바로 이어서 또 들어옴']]);
+});
+
+test('중복: 다른 날·같은 날 한참 뒤는 따로 산 것일 수 있어 남김 제안', () => {
+  const g = duplicateGroups([dupItem('a', T0), dupItem('b', T0 + 3 * 3600e3), dupItem('c', T0 + 26 * 3600e3), dupItem('d', T0 + 26 * 3600e3 + 5 * 60e3)]);
+  assert.deepEqual(g[0].items.map((r) => [r.it.id, r.keep, r.why]), [
+    ['a', true, '처음 적은 것'], ['b', true, '같은 날 3시간 뒤'], ['c', true, '다른 날'], ['d', false, '5분 뒤 또 들어옴'],
+  ]);
+});
+
+test('중복: 낸 사람·내용·금액·통화·몫 중 하나라도 다르면 다른 항목, 내용 앞뒤 공백은 무시', () => {
+  const items = [dupItem('a', T0), dupItem('b', T0 + 1e3, { payer: '서정이' }), dupItem('c', T0 + 2e3, { amount: 8.4 }),
+    dupItem('d', T0 + 3e3, { forWho: '으뜸이' }), dupItem('e', T0 + 4e3, { code: 'KRW' }), dupItem('f', T0 + 5e3, { desc: ' 택시 ' })];
+  const g = duplicateGroups(items);
+  assert.equal(g.length, 1);
+  assert.deepEqual(g[0].items.map((r) => r.it.id), ['a', 'f']);
+  assert.equal(itemKey(items[0]), itemKey(items[5]));
+});
+
+test('중복: 모두 남기기로 확인한 묶음은 다시 안 묻고, 같은 게 또 들어오면 다시 물음', () => {
+  const items = [dupItem('a', T0), dupItem('b', T0 + 20e3)];
+  assert.equal(duplicateGroups(items, ['a', 'b']).length, 0);
+  const g = duplicateGroups([...items, dupItem('c', T0 + 40e3)], new Set(['a', 'b']));
+  assert.equal(g.length, 1);
+  assert.deepEqual(g[0].items.map((r) => [r.it.id, r.keep]), [['a', true], ['b', true], ['c', false]]);
+  assert.equal(g[0].items[1].why, '전에 남기기로 함');
+});
+
+test('중복: 여러 묶음은 첫 항목 시각 순, 한 건짜리는 안 나옴', () => {
+  const items = [dupItem('x', T0 + 9e6, { desc: '국수' }), dupItem('y', T0 + 9e6 + 1e3, { desc: '국수' }), dupItem('a', T0), dupItem('b', T0 + 1e3), dupItem('solo', T0, { desc: '물' })];
+  assert.deepEqual(duplicateGroups(items).map((g) => g.items[0].it.desc), ['택시', '국수']);
 });
