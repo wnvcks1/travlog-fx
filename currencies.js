@@ -21,7 +21,7 @@ export const CURRENCIES = [
   { code: 'GBP', name: '영국 파운드', sym: '£', dec: 2, unit: 1, travlog: 'always' },
   // 이벤트 무료환전 (2026-12-31 까지)
   { code: 'CAD', name: '캐나다 달러', sym: 'C$', dec: 2, unit: 1, travlog: 'event' },
-  // defaultPay: 여행 결제 기본이 '자동'일 때 이 통화 항목은 현금(Chan 2026-10-05: 중국은 현금)
+  // defaultPay: 여행 결제 기본이 '자동'일 때 이 통화 항목은 현금(Chan: 중국 2026-10-05, 멕시코 2026-10-16)
   { code: 'CNY', name: '중국 위안', sym: '¥', dec: 2, unit: 1, travlog: 'event', defaultPay: 'cash' },
   { code: 'SGD', name: '싱가포르 달러', sym: 'S$', dec: 2, unit: 1, travlog: 'event' },
   { code: 'AUD', name: '호주 달러', sym: 'A$', dec: 2, unit: 1, travlog: 'event' },
@@ -39,7 +39,8 @@ export const CURRENCIES = [
   { code: 'TWD', name: '대만 달러', sym: 'NT$', dec: 0, unit: 1, travlog: 'event', spread099: true },
   { code: 'DKK', name: '덴마크 크로네', sym: 'kr', dec: 2, unit: 1, travlog: 'event' },
   { code: 'MYR', name: '말레이시아 링깃', sym: 'RM', dec: 2, unit: 1, travlog: 'event' },
-  { code: 'MXN', name: '멕시코 페소', sym: 'MX$', dec: 2, unit: 1, travlog: 'event' },
+  // 멕시코도 현금 기본(Chan 2026-10-16)
+  { code: 'MXN', name: '멕시코 페소', sym: 'MX$', dec: 2, unit: 1, travlog: 'event', defaultPay: 'cash' },
   { code: 'AED', name: '아랍에미리트 디르함', sym: 'AED', dec: 2, unit: 1, travlog: 'event' },
   { code: 'TRY', name: '튀르키예 리라', sym: '₺', dec: 2, unit: 1, travlog: 'event' },
   { code: 'PLN', name: '폴란드 즈워티', sym: 'zł', dec: 2, unit: 1, travlog: 'event' },
@@ -121,10 +122,11 @@ const PLACE_ALIASES = [
   ['다낭', 'VND'], ['하노이', 'VND'], ['호치민', 'VND'], ['나트랑', 'VND'], ['푸꾸옥', 'VND'], ['세부', 'PHP'], ['보라카이', 'PHP'], ['발리', 'IDR'],
   ['마라케시', 'MAD'], ['카사블랑카', 'MAD'], ['페즈', 'MAD'], ['토론토', 'CAD'], ['밴쿠버', 'CAD'], ['뉴욕', 'USD'], ['하와이', 'USD'], ['괌', 'USD'], ['사이판', 'USD'],
   ['런던', 'GBP'], ['터키', 'TRY'], ['이스탄불', 'TRY'],
+  ['칸쿤', 'MXN'], ['툴룸', 'MXN'], ['플라야델카르멘', 'MXN'], ['과달라하라', 'MXN'], ['오악사카', 'MXN'], ['과나후아토', 'MXN'], ['메리다', 'MXN'],
   ['파리', 'EUR'], ['프랑스', 'EUR'], ['스페인', 'EUR'], ['이탈리아', 'EUR'], ['독일', 'EUR'], ['포르투갈', 'EUR'], ['그리스', 'EUR'], ['오스트리아', 'EUR'], ['네덜란드', 'EUR'], ['벨기에', 'EUR'], ['크로아티아', 'EUR'], ['유럽', 'EUR'],
 ];
 /** 화폐 단위 이름(나라 없이) */
-const UNIT_ALIASES = [['위안', 'CNY'], ['엔', 'JPY'], ['캐달', 'CAD'], ['유로', 'EUR'], ['바트', 'THB'], ['다르함', 'MAD'], ['디르함', 'MAD'], ['파운드', 'GBP'], ['달러', 'USD'], ['불', 'USD']];
+const UNIT_ALIASES = [['위안', 'CNY'], ['엔', 'JPY'], ['캐달', 'CAD'], ['유로', 'EUR'], ['바트', 'THB'], ['다르함', 'MAD'], ['디르함', 'MAD'], ['페소', 'MXN'], ['파운드', 'GBP'], ['달러', 'USD'], ['불', 'USD']];
 
 export function currencyInfo(code) {
   const c = BY_CODE[code];

@@ -204,7 +204,7 @@ test('현금 지갑: 환전 3,850 − 현금으로 낸 MAD(카드 결제 660 제
 test('findCurrency: 코드·이름·나라·도시·단위로 통화 찾기', () => {
   const cases = { CNY: 'CNY', cny: 'CNY', 위안: 'CNY', 중국: 'CNY', '중국 여행': 'CNY', 상하이: 'CNY', '중국 위안': 'CNY',
     엔: 'JPY', 일본: 'JPY', 다카야마: 'JPY', 다낭: 'VND', 인도네시아: 'IDR', 인도: 'INR', '호주달러': 'AUD', '캐나다 달러': 'CAD',
-    모로코: 'MAD', 다르함: 'MAD', 파리: 'EUR', 달러: 'USD', 대만: 'TWD' };
+    모로코: 'MAD', 다르함: 'MAD', 파리: 'EUR', 달러: 'USD', 대만: 'TWD', 멕시코: 'MXN', 멕시코시티: 'MXN', 칸쿤: 'MXN', 페소: 'MXN', '필리핀 페소': 'PHP' };
   for (const [k, v] of Object.entries(cases)) assert.equal(findCurrency(k), v, k);
   assert.equal(findCurrency('XYZ'), null);
   assert.equal(findCurrency(''), null);
@@ -220,6 +220,9 @@ test('여행 기본 결제: 그 여행 통화 항목에만 적용, 항목에 저
   assert.equal(payMethod({ code: 'CNY' }), 'cash');
   assert.equal(payMethod({ code: 'CNY' }, { code: 'CNY', pay: 'card' }), 'card');
   assert.equal(payMethod({ code: 'JPY' }), 'card');
+  assert.equal(payMethod({ code: 'MXN' }), 'cash');
+  assert.equal(payMethod({ code: 'MXN' }, { code: 'MXN', pay: 'card' }), 'card');
+  assert.equal(payMethod({ code: 'USD' }, { code: 'MXN' }), 'card');
   const b = cashBalances([{ payer: '으뜸이', amount: 48, code: 'CNY' }, { payer: '으뜸이', amount: 10, code: 'CNY', pay: 'card' }], [{ person: '으뜸이', code: 'CNY', amount: 1000 }], { code: 'CNY' });
   assert.equal(b[0].spent, 48);
   assert.equal(b[0].remaining, 952);

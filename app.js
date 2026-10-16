@@ -823,7 +823,7 @@ function renderCash(trip) {
     <div class="hint" style="margin:6px 0">${list ? '넣은 돈:' : ''}</div>${list}
     <div class="row" style="margin-top:8px">${personSel}<input id="c-amount" inputmode="decimal" placeholder="환전 금액" autocomplete="off"><select id="c-code" style="flex:0 0 34%">${currencyOptions(trip.code)}</select></div>
     <div class="actions"><button class="btn primary" data-action="cash-add">현금 넣기</button></div>
-    <p class="hint">항목마다 결제(현금/카드)를 정할 수 있음. 안 정하면 설정 → 여행의 "결제 기본"을 따름(그 여행 통화 항목만). 자동이면 위안·디르함은 현금, 나머지는 카드.</p></section>`;
+    <p class="hint">항목마다 결제(현금/카드)를 정할 수 있음. 안 정하면 설정 → 여행의 "결제 기본"을 따름(그 여행 통화 항목만). 자동이면 위안·페소·디르함은 현금, 나머지는 카드.</p></section>`;
 }
 
 
@@ -965,7 +965,7 @@ function renderSettings() {
 
   return `
   <section class="card"><h2>사람 · 메모 초성 · 분담 비율</h2>${people}<p class="hint">이름을 바꾸면 기존 내역의 이름도 같이 바뀜. 가운데는 노션 메모 줄 맨 앞 글자(ㅈ·ㅅ), 오른쪽은 분담 비율(1:1 이 균등).</p></section>
-  <section class="card"><h2>여행</h2>${trips}<p class="hint">결제 기본은 그 여행 통화로 낸 항목에만 적용. 자동 = 위안(CNY)·디르함(MAD)은 현금, 나머지는 카드.</p><div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
+  <section class="card"><h2>여행</h2>${trips}<p class="hint">결제 기본은 그 여행 통화로 낸 항목에만 적용. 자동 = 위안(CNY)·멕시코 페소(MXN)·디르함(MAD)은 현금, 나머지는 카드.</p><div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
   <section class="card"><h2>즐겨찾기 통화</h2><div class="chips" style="flex-wrap:wrap;overflow:visible">${favChips}</div></section>
   <section class="card"><h2>트래블로그 앱 환율 맞추기</h2>
     <p class="hint" style="margin:0 0 6px">하나머니 화면의 "USD 1 = 1,359원" 값을 그대로 넣으면 앱 전체(정산 내역 포함)가 그 환율로 계산됨. 더 새 고시가 나오면 자동으로 해제.</p>
