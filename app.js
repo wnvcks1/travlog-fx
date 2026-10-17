@@ -411,7 +411,7 @@ function renderFx() {
     if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b> · ${src.source === 'travlog' || (src.source === 'manual-cross' && tvUsd) ? `<span class="ok">트래블로그 앱 값 (${esc((state.travlog.at || '').slice(5))} 입력)</span>` : badgeHtml()}`);
     if (unsupported(code)) {
       // 미지원 통화는 USD 지갑에서 빠짐: 교차 → USD 금액 → 원화, 단계마다 한 줄
-      lines.push(`USD 1 = ${fmt(crossOf(code) || 0, 2)} ${esc(code)} (${crossLabel(code)}) · USD 지갑에서 결제`);
+      lines.push(`${fmt(crossOf(code) || 0, 2)} ${esc(code)} = USD 1 (${crossLabel(code)}) · USD 지갑에서 결제`);
       lines.push(`${fmt(amt, info.dec)} ${esc(code)} = ${fmt(usdAmt, 2)} USD`);
       lines.push(`${fmt(usdAmt, 2)} USD × ${fmt(usd.rate, 2)}원 = ${fmt(krw)}원`);
     }
@@ -938,6 +938,99 @@ function travlogStatus() {
   return `<span class="warn">${esc(t.at)} 입력값은 만료됨(고시일 ${esc(rates?.baseDate || '—')} 이 더 새로움). 다시 보고 넣을 것.</span>`;
 }
 
+/**
+ * @param {string} code
+ * @returns {number} 고시 단위(엔 100, 나머지 1)
+ */
+function unitOf(code) { const u = currencyInfo(code).unit; return u > 1 ? u : 1; }
+
+/**
+ * 숫자를 소수 max 자리까지, 뒤 0 은 떼고 쉼표. 9.2 → "9.2", 18.7512 → "18.7512"
+ * @param {number} v
+ * @param {number} max
+ * @returns {string}
+ */
+function trimNum(v, max) {
+  const r = Number(v.toFixed(max));
+  const dec = (String(r).split('.')[1] || '').length;
+  return fmt(r, Math.min(dec, max));
+}
+
+/**
+ * 수동 환율 종류. 그 나라 돈이 왼쪽(Chan 2026-10-17): "멕시코 페소 ? = USD 1달러", "멕시코 페소 1 = 한화 ?원"
+ * @param {string} code
+ * @param {string} selected 'usdCross' | 'krw'
+ * @returns {string}
+ */
+function manualKindOptions(code, selected) {
+  const i = currencyInfo(code);
+  return [['usdCross', `${i.name} ? = USD 1달러`], ['krw', `${i.name} ${unitOf(code)} = 한화 ?원`]]
+    .map(([v, l]) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${esc(l)}</option>`).join('');
+}
+
+/**
+ * 트래블로그 미지원 통화(MAD)는 USD 지갑으로 결제하니 달러 기준, 나머지는 원화 기준이 기본.
+ * @param {string} code
+ * @returns {'usdCross'|'krw'}
+ */
+function manualDefaultKind(code) { return currencyInfo(code).travlog === 'none' ? 'usdCross' : 'krw'; }
+
+/**
+ * 지금 앱이 쓰는 값을 입력칸 예시로. usdCross: 그 통화 몇 개 = 1달러, krw: 고시 단위당 원.
+ * @param {string} code
+ * @param {string} kind
+ * @returns {string}
+ */
+function manualPlaceholder(code, kind) {
+  try {
+    const r = krwPerUnit(code, ctx()).rate;
+    if (kind === 'usdCross') return String(Number((krwPerUnit('USD', ctx()).rate / r).toFixed(4)));
+    return String(Number((r * unitOf(code)).toFixed(2)));
+  } catch (e) {
+    if (e instanceof RateMissingError) return '';
+    throw e;
+  }
+}
+
+/**
+ * 저장하면 어떤 환율이 되는지 미리 보여 줌. 고시와 많이 다르면(1.5배 넘게) 숫자를 거꾸로 넣었는지 경고.
+ * @param {string} code
+ * @param {string} kind
+ * @param {number} v 입력값
+ * @returns {string}
+ */
+function manualPreviewText(code, kind, v) {
+  const u = unitOf(code);
+  let posted = null;
+  try { posted = krwPerUnit(code, { rates, manual: {} }).rate; } catch (e) { if (!(e instanceof RateMissingError)) throw e; }
+  const postedTxt = posted ? `고시 ${u} ${code} = ${fmt(posted * u, 2)}원` : '고시 없음';
+  if (!(v > 0)) return postedTxt;
+  let krw = null;
+  if (kind === 'usdCross') {
+    try { krw = krwPerUnit('USD', ctx()).rate / v; } catch (e) { if (!(e instanceof RateMissingError)) throw e; }
+  } else krw = v / u;
+  if (!krw) return '달러 환율이 없어 원화로 못 바꿈';
+  const ratio = posted ? krw / posted : 1;
+  const warn = ratio > 1.5 || ratio < 1 / 1.5 ? ' 🟡 고시와 차이가 큼, 숫자 확인' : '';
+  return `저장하면 ${u} ${code} = ${fmt(krw * u, 2)}원 · ${postedTxt}${warn}`;
+}
+
+/**
+ * 수동 환율 입력칸이 바뀌면 다시 그리지 않고 라벨·예시·미리보기만 고침(입력 중인 값 유지).
+ * @param {'code'|'kind'|'val'} what
+ */
+function updateManualForm(what) {
+  const codeEl = /** @type {HTMLSelectElement|null} */ (document.getElementById('m-code'));
+  const kindEl = /** @type {HTMLSelectElement|null} */ (document.getElementById('m-kind'));
+  const valEl = /** @type {HTMLInputElement|null} */ (document.getElementById('m-val'));
+  const prev = document.getElementById('m-preview');
+  if (!codeEl || !kindEl || !valEl || !prev) return;
+  const code = codeEl.value;
+  if (what === 'code') kindEl.innerHTML = manualKindOptions(code, manualDefaultKind(code));
+  if (what !== 'val') valEl.placeholder = manualPlaceholder(code, kindEl.value);
+  prev.textContent = manualPreviewText(code, kindEl.value, parseAmount(valEl.value));
+}
+
 /** @returns {string} */
 function renderSettings() {
   const payOpt = (t) => [['cash', '결제 기본: 현금'], ['card', '결제 기본: 카드']]
@@ -946,8 +1039,8 @@ function renderSettings() {
     <div class="row"><select data-action="trip-code" data-id="${esc(t.id)}">${currencyOptions(t.code)}</select><select data-action="trip-pay" data-id="${esc(t.id)}">${payOpt(t)}</select></div></div>`).join('');
   const favChips = CURRENCIES.filter((c) => c.code !== 'KRW').map((c) => `<button class="chip ${state.favorites.includes(c.code) ? 'on' : ''}" data-action="fav-toggle" data-code="${esc(c.code)}">${esc(c.code)}</button>`).join('');
   const manualRows = [
-    ...Object.entries(state.manual.krw).map(([c, v]) => `<div class="kv"><span>1 ${esc(c)} = ${fmt(v, 2)}원</span><button class="del" data-action="manual-del" data-kind="krw" data-code="${esc(c)}">삭제</button></div>`),
-    ...Object.entries(state.manual.usdCross).map(([c, v]) => `<div class="kv"><span>USD 1 = ${fmt(v, 3)} ${esc(c)}</span><button class="del" data-action="manual-del" data-kind="usdCross" data-code="${esc(c)}">삭제</button></div>`),
+    ...Object.entries(state.manual.krw).map(([c, v]) => { const u = unitOf(c); return `<div class="kv"><span>${u} ${esc(c)} = 한화 ${fmt(v * u, 2)}원</span><button class="del" data-action="manual-del" data-kind="krw" data-code="${esc(c)}">삭제</button></div>`; }),
+    ...Object.entries(state.manual.usdCross).map(([c, v]) => `<div class="kv"><span>${trimNum(v, 4)} ${esc(c)} = USD 1달러</span><button class="del" data-action="manual-del" data-kind="usdCross" data-code="${esc(c)}">삭제</button></div>`),
   ].join('') || '<div class="muted">없음</div>';
 
   let rateTable = '<div class="muted">환율 데이터 없음</div>';
@@ -973,11 +1066,12 @@ function renderSettings() {
     <div class="actions"><button class="btn primary" data-action="travlog-save">저장</button>${Object.keys(state.travlog.rates).length ? '<button class="btn sm" data-action="travlog-clear">지우기</button>' : ''}</div>
     <div class="muted" style="margin-top:6px">${travlogStatus()}</div></section>
   <section class="card"><h2>수동 환율 (항상 우선)</h2>${manualRows}
-    <div class="row" style="margin-top:8px"><select id="m-code" style="flex:0 0 40%">${currencyOptions(fx.code)}</select>
-      <select id="m-kind" style="flex:0 0 30%"><option value="usdCross">USD 1달러 = ? 현지</option><option value="krw">현지 1 = ? 원</option></select>
-      <input id="m-val" inputmode="decimal" placeholder="9.2"></div>
+    <div class="row" style="margin-top:8px"><select id="m-code" data-action="manual-code">${currencyOptions(fx.code)}</select></div>
+    <div class="row"><select id="m-kind" data-action="manual-kind">${manualKindOptions(fx.code, manualDefaultKind(fx.code))}</select></div>
+    <div class="row"><input id="m-val" data-action="manual-val" inputmode="decimal" placeholder="${esc(manualPlaceholder(fx.code, manualDefaultKind(fx.code)))}" autocomplete="off"></div>
+    <div id="m-preview" class="muted" style="min-height:1.3em">${esc(manualPreviewText(fx.code, manualDefaultKind(fx.code), 0))}</div>
     <div class="actions"><button class="btn primary" data-action="manual-add">수동 환율 저장</button></div>
-    <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "USD 1 = 9.2 MAD".</p></section>
+    <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "9.2 MAD = USD 1달러", 멕시코 "1 MXN = 한화 72원".</p></section>
   <section class="card"><h2>같이 쓰기 (두 폰 동기화)</h2>
     ${state.sync.code ? `
     <div class="line" style="display:flex;justify-content:space-between;align-items:center"><span>방 코드</span><span><b style="font-size:1.3rem;letter-spacing:.12em">${esc(state.sync.code)}</b></span></div>
@@ -1272,7 +1366,7 @@ async function onClick(el) {
       const kind = /** @type {HTMLSelectElement} */ (document.getElementById('m-kind')).value;
       const v = parseAmount(/** @type {HTMLInputElement} */ (document.getElementById('m-val')).value);
       if (!(v > 0)) { toast('값을 넣어 줘'); return; }
-      state.manual[kind][code] = v;
+      state.manual[kind][code] = kind === 'krw' ? v / unitOf(code) : v;
       const n = resnapshotItems(code);
       persist(); render(); toast(`${code} 수동 환율 저장${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
     }
@@ -1386,6 +1480,9 @@ function onInput(el) {
       break;
     }
     case 'trip-name': { const t = state.trips.find((x) => x.id === d.id); if (t) { t.name = el.value; persist(); } break; }
+    case 'manual-code': updateManualForm('code'); break;
+    case 'manual-kind': updateManualForm('kind'); break;
+    case 'manual-val': updateManualForm('val'); break;
     case 'trip-pay': {
       const t = state.trips.find((x) => x.id === d.id);
       if (!t) break;
