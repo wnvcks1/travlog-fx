@@ -176,6 +176,16 @@ export function payMethod(item, trip = null) {
 }
 
 /**
+ * 새로 적는 항목의 결제 기본. 모든 여행이 현금이고, 여행을 '카드'로 정한 경우만 카드(Chan 2026-10-17).
+ * 이미 저장된 항목은 바꾸지 않음: 결제가 비어 있는 옛 항목은 payMethod 의 자동 규칙 그대로.
+ * @param {{pay?:string}|null} [trip]
+ * @returns {'cash'|'card'}
+ */
+export function defaultEntryPay(trip = null) {
+  return trip && trip.pay === 'card' ? 'card' : 'cash';
+}
+
+/**
  * 사람·통화별 현금 지갑: 환전(넣은 돈) 합 − 그 사람이 현금으로 낸 항목 합 = 남은 현금.
  * 지갑이 없는 사람·통화의 현금 지출은 topup 0 으로 잡혀 음수 잔액으로 드러남(숨기지 않음).
  * @param {Array<{payer:string, amount:number, code:string, pay?:string}>} items

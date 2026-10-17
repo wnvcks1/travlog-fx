@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay, withDay,
+  krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay, withDay, defaultEntryPay,
   duplicateGroups, itemKey,
 } from '../calc.js';
 import { CURRENCIES, TRAVLOG_COUNT, currencyInfo, findCurrency } from '../currencies.js';
@@ -292,4 +292,11 @@ test('중복: 모두 남기기로 확인한 묶음은 다시 안 묻고, 같은 
 test('중복: 여러 묶음은 첫 항목 시각 순, 한 건짜리는 안 나옴', () => {
   const items = [dupItem('x', T0 + 9e6, { desc: '국수' }), dupItem('y', T0 + 9e6 + 1e3, { desc: '국수' }), dupItem('a', T0), dupItem('b', T0 + 1e3), dupItem('solo', T0, { desc: '물' })];
   assert.deepEqual(duplicateGroups(items).map((g) => g.items[0].it.desc), ['택시', '국수']);
+});
+
+test('새 항목 결제 기본: 모든 여행 현금, 여행을 카드로 정한 경우만 카드', () => {
+  assert.equal(defaultEntryPay(), 'cash');
+  assert.equal(defaultEntryPay({ code: 'KRW' }), 'cash');
+  assert.equal(defaultEntryPay({ code: 'USD', pay: 'cash' }), 'cash');
+  assert.equal(defaultEntryPay({ code: 'JPY', pay: 'card' }), 'card');
 });
