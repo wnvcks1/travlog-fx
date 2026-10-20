@@ -78,6 +78,36 @@ export const CURRENCIES = [
   // 트래블로그 미지원 — USD 지갑 결제. 여행지 통화라 표시용으로 넣음
   // ceilDisplay: 정산 내역에서 소수점을 올림한 정수로 보여 줌(97.6 → 98). 계산은 원래 값 그대로
   { code: 'MAD', name: '모로코 디르함', sym: 'DH', dec: 2, unit: 1, travlog: 'none', ceilDisplay: true },
+  // 나라 이름 검색용(2026-10-20). 트래블로그 미지원 → USD 지갑 결제, 환율은 er-api 의 USD 교차
+  { code: 'ARS', name: '아르헨티나 페소', sym: '$', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'PEN', name: '페루 솔', sym: 'S/', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'BOB', name: '볼리비아 볼리비아노', sym: 'Bs', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'UYU', name: '우루과이 페소', sym: '$U', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'PYG', name: '파라과이 과라니', sym: '₲', dec: 0, unit: 1, travlog: 'none' },
+  { code: 'CRC', name: '코스타리카 콜론', sym: '₡', dec: 0, unit: 1, travlog: 'none' },
+  { code: 'GTQ', name: '과테말라 케찰', sym: 'Q', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'DOP', name: '도미니카공화국 페소', sym: 'RD$', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'CUP', name: '쿠바 페소', sym: '$', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'JMD', name: '자메이카 달러', sym: 'J$', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'ISK', name: '아이슬란드 크로나', sym: 'kr', dec: 0, unit: 1, travlog: 'none' },
+  { code: 'RSD', name: '세르비아 디나르', sym: 'дин', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'BAM', name: '보스니아 마르크', sym: 'KM', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'MKD', name: '북마케도니아 데나르', sym: 'ден', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'ALL', name: '알바니아 레크', sym: 'L', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'GEL', name: '조지아 라리', sym: '₾', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'AMD', name: '아르메니아 드람', sym: '֏', dec: 0, unit: 1, travlog: 'none' },
+  { code: 'AZN', name: '아제르바이잔 마나트', sym: '₼', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'UAH', name: '우크라이나 흐리우냐', sym: '₴', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'RUB', name: '러시아 루블', sym: '₽', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'KGS', name: '키르기스스탄 솜', sym: 'сом', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'LAK', name: '라오스 킵', sym: '₭', dec: 0, unit: 1, travlog: 'none' },
+  { code: 'MVR', name: '몰디브 루피야', sym: 'Rf', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'MUR', name: '모리셔스 루피', sym: '₨', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'SCR', name: '세이셸 루피', sym: '₨', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'NGN', name: '나이지리아 나이라', sym: '₦', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'GHS', name: '가나 세디', sym: '₵', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'TND', name: '튀니지 디나르', sym: 'DT', dec: 2, unit: 1, travlog: 'none' },
+  { code: 'XPF', name: '프랑스령 폴리네시아 프랑', sym: '₣', dec: 0, unit: 1, travlog: 'none' },
   { code: 'KRW', name: '한국 원', sym: '₩', dec: 0, unit: 1, travlog: 'none' },
 ];
 
@@ -114,6 +144,35 @@ export function findCurrency(text) {
   return null;
 }
 
+/**
+ * 나라·통화 이름·코드·도시로 통화 목록 검색(가까운 것부터). "멕" → 멕시코 페소, "페소" → 페소 쓰는 나라 전부,
+ * "상하이" → 중국 위안. 빈 문자열이면 [].
+ * @param {string} q
+ * @param {number} [limit]
+ * @returns {Currency[]}
+ */
+export function searchCurrencies(q, limit = 20) {
+  const t = String(q || '').trim();
+  if (!t) return [];
+  const up = t.toUpperCase();
+  const ns = t.replace(/\s/g, '');
+  /** @type {Array<[number, Currency]>} */
+  const scored = [];
+  for (const c of CURRENCIES) {
+    const name = c.name.replace(/\s/g, '');
+    let s = 0;
+    if (c.code === up) s = 100;
+    else if (name === ns) s = 90;
+    else if (c.name.startsWith(t) || name.startsWith(ns)) s = 80;
+    else if (name.includes(ns)) s = 60;
+    else if (/^[A-Z]{1,3}$/.test(up) && c.code.startsWith(up)) s = 50;
+    if (s) scored.push([s, c]);
+  }
+  const via = findCurrency(t);
+  if (via && BY_CODE[via] && !scored.some(([, c]) => c.code === via)) scored.push([70, BY_CODE[via]]);
+  return scored.sort((a, b) => b[0] - a[0] || a[1].name.localeCompare(b[1].name, 'ko')).slice(0, limit).map(([, c]) => c);
+}
+
 /** 도시·나라 별칭(테이블 이름에 없는 것) */
 const PLACE_ALIASES = [
   ['상하이', 'CNY'], ['상해', 'CNY'], ['베이징', 'CNY'], ['북경', 'CNY'], ['광저우', 'CNY'], ['청두', 'CNY'], ['시안', 'CNY'], ['칭다오', 'CNY'], ['장가계', 'CNY'],
@@ -123,6 +182,7 @@ const PLACE_ALIASES = [
   ['마라케시', 'MAD'], ['카사블랑카', 'MAD'], ['페즈', 'MAD'], ['토론토', 'CAD'], ['밴쿠버', 'CAD'], ['뉴욕', 'USD'], ['하와이', 'USD'], ['괌', 'USD'], ['사이판', 'USD'],
   ['런던', 'GBP'], ['터키', 'TRY'], ['이스탄불', 'TRY'],
   ['칸쿤', 'MXN'], ['툴룸', 'MXN'], ['플라야델카르멘', 'MXN'], ['과달라하라', 'MXN'], ['오악사카', 'MXN'], ['과나후아토', 'MXN'], ['메리다', 'MXN'],
+  ['타히티', 'XPF'], ['폴리네시아', 'XPF'], ['불가리아', 'EUR'], ['리마', 'PEN'], ['쿠스코', 'PEN'], ['부에노스아이레스', 'ARS'], ['트빌리시', 'GEL'], ['레이캬비크', 'ISK'],
   ['파리', 'EUR'], ['프랑스', 'EUR'], ['스페인', 'EUR'], ['이탈리아', 'EUR'], ['독일', 'EUR'], ['포르투갈', 'EUR'], ['그리스', 'EUR'], ['오스트리아', 'EUR'], ['네덜란드', 'EUR'], ['벨기에', 'EUR'], ['크로아티아', 'EUR'], ['유럽', 'EUR'],
 ];
 /** 화폐 단위 이름(나라 없이) */

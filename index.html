@@ -164,7 +164,7 @@ table.rates td:first-child,table.rates th:first-child{text-align:left;}
 .tbl-wrap{overflow-x:auto;}
 .muted{color:var(--sub);font-size:.85rem;}
 .hint{font-size:.8rem;color:var(--sub);margin:4px 0 0;}
-#toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:.9rem;opacity:0;pointer-events:none;transition:opacity .2s;z-index:20;max-width:90vw;text-align:center;}
+#toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--text);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:.9rem;opacity:0;pointer-events:none;transition:opacity .2s;z-index:40;max-width:90vw;text-align:center;}
 #toast.show{opacity:1;}
 .empty{color:var(--sub);text-align:center;padding:18px 0;font-size:.9rem;}
 .pill{display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:999px;background:var(--chip);color:var(--sub);vertical-align:middle;margin-left:6px;}
@@ -192,6 +192,34 @@ body.fx .keypad{flex:1;min-height:0;grid-template-rows:repeat(4,minmax(40px,1fr)
 body.fx .key{min-height:0;font-size:1.3rem;}
 body.fx .actions{margin-top:8px;}
 body.fx .btn{min-height:44px;}
+/* 아래에서 올라오는 창: 통화 찾기·편집, 원화 대비 차트 */
+#sheet{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;}
+#sheet[hidden]{display:none;}
+.sheet{background:var(--card);color:var(--text);width:100%;max-width:560px;max-height:88vh;max-height:88dvh;overflow:auto;border-radius:16px 16px 0 0;padding:14px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:0 -4px 24px rgba(0,0,0,.25);-webkit-user-select:text;user-select:text;}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;}
+.sheet-head h3{margin:0;font-size:1.05rem;}
+.cur-row{display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid var(--border);}
+.cur-row:first-child{border-top:0;}
+.cur-row .code{font-weight:700;min-width:44px;}
+.cur-row .nm{flex:1;min-width:0;color:var(--sub);font-size:.9rem;}
+.cur-row .del{color:var(--up);font-size:.85rem;padding:6px 8px;}
+#cur-q{margin:4px 0 8px;}
+.mini{font-size:.75rem;padding:3px 9px;border-radius:999px;background:var(--chip);color:var(--text);margin-left:6px;vertical-align:middle;}
+.chart-hero{font-size:1.5rem;font-weight:700;margin-top:4px;}
+.delta.up{color:var(--up);}
+.delta.down{color:var(--down);}
+.chart-wrap{position:relative;margin:10px 0 6px;padding-top:26px;}
+.chart-wrap svg{display:block;touch-action:pan-y;}
+.chart-wrap svg:focus{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px;}
+.chart-tip{position:absolute;top:0;left:0;visibility:hidden;white-space:nowrap;font-size:.8rem;color:var(--sub);background:var(--card);border:1px solid var(--border);border-radius:8px;padding:2px 8px;}
+.chart-tip b{color:var(--text);}
+svg .grid{stroke:var(--border);stroke-width:1;}
+svg .ax{fill:var(--sub);font-size:11px;}
+svg .line{fill:none;stroke:var(--accent);stroke-width:2;stroke-linejoin:round;stroke-linecap:round;}
+svg .area{fill:var(--accent);opacity:.1;}
+svg .dot{fill:var(--accent);stroke:var(--card);stroke-width:2;}
+svg .cross{stroke:var(--sub);stroke-width:1;}
+.chart-table summary{cursor:pointer;color:var(--sub);font-size:.85rem;margin:6px 0;}
 </style>
 </head>
 <body>
@@ -202,6 +230,7 @@ body.fx .btn{min-height:44px;}
   <button data-tab="settle"><span class="ic">🧾</span>정산</button>
   <button data-tab="settings"><span class="ic">⚙️</span>설정</button>
 </nav>
+<div id="sheet" hidden></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <noscript>이 앱은 자바스크립트가 필요함.</noscript>
 <script type="module" src="./app.js"></script>

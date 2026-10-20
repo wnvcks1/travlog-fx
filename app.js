@@ -2,7 +2,8 @@
  * 트래블로그 환율·정산 PWA UI. 빌드 없이 브라우저 ES module 로 바로 실행.
  * 상태는 store.js(localStorage), 계산은 calc.js, 환율 로딩은 rates.js.
  */
-import { CURRENCIES, currencyInfo, findCurrency } from './currencies.js';
+import { CURRENCIES, currencyInfo, findCurrency, searchCurrencies } from './currencies.js';
+import { loadHistory, hasHistory, sliceYears, summarize, chartModel, ECB_CODES, PEGS } from './history.js';
 import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
@@ -73,6 +74,12 @@ const tabs = /** @type {HTMLElement} */ (document.getElementById('tabs'));
 const titleEl = /** @type {HTMLElement} */ (document.getElementById('title'));
 const badgeEl = /** @type {HTMLElement} */ (document.getElementById('rate-badge'));
 const toastEl = /** @type {HTMLElement} */ (document.getElementById('toast'));
+const sheetEl = /** @type {HTMLElement} */ (document.getElementById('sheet'));
+/**
+ * 아래에서 올라오는 창. 통화 찾기·편집 또는 원화 대비 차트.
+ * @type {null | {type:'cur', q:string} | {type:'chart', code:string, years:number, status:'loading'|'ok'|'none'|'error', points:Array<[string, number]>|null, fromCache:boolean, peg:[string, number]|null, error:string, idx:number}}
+ */
+let sheet = null;
 
 /**
  * 트래블로그 앱 값이 아직 유효한지. 입력한 날보다 새 고시일이 나오면 만료(그날 환율은 새 고시를 따름).
@@ -441,7 +448,7 @@ function renderFx() {
   return `
   <section class="card">
     <div class="chips">${chips}</div>
-    <div class="muted">${esc(info.name)} 입력 ${travlogPill(code)}</div>
+    <div class="muted">${esc(info.name)} 입력 ${travlogPill(code)}${code !== 'KRW' ? '<button class="mini" data-action="chart-open">📈 차트</button>' : ''}</div>
     ${expr}
     <div class="amount"><span class="num">${big}</span><span class="unit">${esc(code === 'KRW' ? '원' : code)}</span></div>
     <div class="results">${cards}</div>
@@ -938,6 +945,185 @@ function travlogStatus() {
   return `<span class="warn">${esc(t.at)} 입력값은 만료됨(고시일 ${esc(rates?.baseDate || '—')} 이 더 새로움). 다시 보고 넣을 것.</span>`;
 }
 
+/* ───────────── 아래에서 올라오는 창(통화 찾기·차트) ───────────── */
+
+/**
+ * 검색 결과 줄. 누르면 그 통화로 환율 탭을 열고 버튼 줄에 추가.
+ * @param {string} q
+ * @returns {string}
+ */
+function curResults(q) {
+  if (!q.trim()) return '<p class="hint">나라 이름(멕시코), 통화 이름(페소), 도시(방콕), 영문 코드(THB) 아무거나.</p>';
+  const list = searchCurrencies(q, 15).filter((c) => c.code !== 'KRW');
+  if (!list.length) return '<p class="hint">못 찾음. 다른 이름이나 영문 3자 코드로 찾아 볼 것.</p>';
+  return list.map((c) => `<div class="cur-row"><span class="code">${esc(c.code)}</span><span class="nm">${esc(c.name)}${state.favorites.includes(c.code) ? ' · <small>버튼 있음</small>' : ''}</span>
+    ${hasHistory(c.code) ? `<button class="btn sm" data-action="chart-open" data-code="${esc(c.code)}" aria-label="${esc(c.name)} 차트">📈</button>` : ''}
+    <button class="btn sm primary" data-action="cur-pick" data-code="${esc(c.code)}">보기</button></div>`).join('');
+}
+
+/** @returns {string} 지금 환율 탭 버튼 줄의 통화들(✕ 로 빼기) */
+function curMine() {
+  if (!state.favorites.length) return '<p class="hint">없음. 위에서 찾아 추가.</p>';
+  return state.favorites.map((c) => `<div class="cur-row"><span class="code">${esc(c)}</span><span class="nm">${esc(currencyInfo(c).name)}</span><button class="del" data-action="cur-del" data-code="${esc(c)}" aria-label="${esc(c)} 빼기">✕ 빼기</button></div>`).join('');
+}
+
+/** 검색어 칠 때·뺄 때는 창 전체를 다시 그리지 않음(입력 중 글자·키보드 유지) */
+function updateCurSheet() {
+  if (sheet?.type !== 'cur') return;
+  const r = document.getElementById('cur-results');
+  const m = document.getElementById('cur-mine');
+  if (r) r.innerHTML = curResults(sheet.q);
+  if (m) m.innerHTML = curMine();
+}
+
+/**
+ * 원화 대비 차트 열기. 캐시가 있으면 바로 그리고, 없으면 받는 동안 "불러오는 중".
+ * @param {string} code
+ */
+function openChart(code) {
+  const years = sheet?.type === 'chart' ? sheet.years : 5;
+  sheet = { type: 'chart', code, years, status: hasHistory(code) ? 'loading' : 'none', points: null, fromCache: false, peg: null, error: '', idx: -1 };
+  renderSheet();
+  if (!hasHistory(code)) return;
+  loadHistory(code).then((r) => {
+    if (sheet?.type !== 'chart' || sheet.code !== code) return;
+    Object.assign(sheet, { status: 'ok', points: r.points, fromCache: r.fromCache, peg: r.peg || null });
+    renderSheet();
+  }).catch((e) => {
+    if (sheet?.type !== 'chart' || sheet.code !== code) return;
+    Object.assign(sheet, { status: 'error', error: e?.message || String(e) });
+    renderSheet();
+  });
+}
+
+/**
+ * 차트 값 표시: 1000 넘으면 정수, 100 넘으면 한 자리, 그 아래는 두 자리.
+ * @param {number} v
+ * @returns {string}
+ */
+function fmtV(v) { return fmt(v, v >= 1000 ? 0 : v >= 100 ? 1 : 2); }
+
+/**
+ * 'YYYY-MM-DD' → '25.04.07'
+ * @param {string} d
+ * @returns {string}
+ */
+function shortDay(d) { return `${d.slice(2, 4)}.${d.slice(5, 7)}.${d.slice(8, 10)}`; }
+
+/** @returns {string} 차트 창 HTML(그래프는 drawChart 가 폭을 재서 그림) */
+function chartSheetHtml() {
+  const s = /** @type {any} */ (sheet);
+  const info = currencyInfo(s.code);
+  const u = unitOf(s.code);
+  const seg = `<div class="seg" role="group" aria-label="기간">${[1, 3, 5].map((y) => `<button class="${s.years === y ? 'on' : ''}" data-action="chart-range" data-years="${y}">${y}년</button>`).join('')}</div>`;
+  let body = '';
+  if (s.status === 'none') {
+    const list = [...ECB_CODES, ...Object.keys(PEGS)].sort().join(' ');
+    body = `<p class="hint">${esc(info.name)}(${esc(s.code)})는 무료로 받을 수 있는 과거 환율(ECB)에 없어서 차트를 못 그림.<br>차트 되는 통화: ${esc(list)}</p>`;
+  } else if (s.status === 'error' && !s.points) {
+    body = `<p class="err">못 받음: ${esc(s.error)}. 인터넷 연결을 확인하고 다시 열 것.</p>`;
+  } else if (!s.points) {
+    body = '<p class="muted">불러오는 중…</p>';
+  } else {
+    const pts = sliceYears(s.points, s.years);
+    const sm = summarize(pts);
+    const up = sm.changePct >= 0;
+    const months = new Map();
+    for (const [d, v] of pts) months.set(d.slice(0, 7), [d, v]);
+    const rows = [...months.values()].reverse().map(([d, v]) => `<tr><td>${esc(d.slice(0, 7))}</td><td>${fmtV(v * u)}원</td></tr>`).join('');
+    body = `${seg}
+      <div class="chart-hero">${u} ${esc(s.code)} = ${fmtV(sm.last[1] * u)}원</div>
+      <div class="muted">${esc(shortDay(sm.last[0]))} 기준 · <b class="delta ${up ? 'up' : 'down'}">${up ? '+' : ''}${fmt(sm.changePct, 1)}%</b> (${s.years}년 전 ${fmtV(sm.first[1] * u)}원)</div>
+      <div class="chart-wrap" id="chart-wrap"><div class="chart-tip" id="chart-tip" aria-live="polite"></div></div>
+      <div class="muted">최저 ${fmtV(sm.min[1] * u)}원 (${esc(shortDay(sm.min[0]))}) · 최고 ${fmtV(sm.max[1] * u)}원 (${esc(shortDay(sm.max[0]))})</div>
+      <details class="chart-table"><summary>표로 보기 (달마다 마지막 날)</summary><div class="tbl-wrap"><table class="rates"><tr><th>달</th><th>${u} ${esc(s.code)}</th></tr>${rows}</table></div></details>
+      <p class="hint">출처: ECB(유럽중앙은행) 기준환율, 평일 하루 1번. 하나은행 고시·트래블로그 값과 조금 다를 수 있음.${s.peg ? ` ${esc(s.code)} 는 ${esc(s.peg[0])} 고정환율(${esc(s.peg[0])} 1 = ${s.peg[1]} ${esc(s.code)})로 환산.` : ''}${s.fromCache ? ' 저장해 둔 값으로 그림(새로 받지 못함).' : ''}</p>`;
+  }
+  return `<div class="sheet" role="dialog" aria-label="${esc(info.name)} 원화 대비 차트">
+    <div class="sheet-head"><h3>${esc(info.name)} · 원화 기준</h3><button class="btn sm" data-action="sheet-close">닫기</button></div>${body}</div>`;
+}
+
+/** 창 그리기(없으면 숨김) */
+function renderSheet() {
+  if (!sheet) { sheetEl.hidden = true; sheetEl.innerHTML = ''; return; }
+  sheetEl.hidden = false;
+  if (sheet.type === 'cur') {
+    sheetEl.innerHTML = `<div class="sheet" role="dialog" aria-label="통화 찾기">
+      <div class="sheet-head"><h3>통화 찾기 · 버튼 편집</h3><button class="btn sm" data-action="sheet-close">닫기</button></div>
+      <input id="cur-q" data-action="cur-q" value="${esc(sheet.q)}" placeholder="나라·통화·도시 (예: 멕시코, 페소, 방콕)" autocomplete="off" enterkeyhint="search">
+      <div id="cur-results">${curResults(sheet.q)}</div>
+      <h2 style="margin-top:14px">환율 탭 버튼</h2>
+      <div id="cur-mine">${curMine()}</div>
+      <p class="hint">✕ 빼기로 버튼에서 뺌. 지금 여행 통화(${esc(activeTrip().code)})는 빼도 맨 앞에 늘 보임.</p></div>`;
+    return;
+  }
+  sheetEl.innerHTML = chartSheetHtml();
+  drawChart();
+}
+
+/** 차트 SVG. 폭은 창 폭에 맞춤. 손가락·마우스로 누른 날짜의 값을 보여 주는 세로선 */
+function drawChart() {
+  const wrap = document.getElementById('chart-wrap');
+  const s = /** @type {any} */ (sheet);
+  if (!wrap || !s?.points) return;
+  const pts = sliceYears(s.points, s.years);
+  const u = unitOf(s.code);
+  const scaled = pts.map(([d, v]) => /** @type {[string, number]} */ ([d, v * u]));
+  const w = Math.max(260, wrap.clientWidth || 320);
+  const box = { w, h: 220, left: 46, right: 12, top: 12, bottom: 24 };
+  const m = chartModel(scaled, box);
+  const step = m.yTicks.length > 1 ? m.yTicks[1].v - m.yTicks[0].v : 1;
+  // 눈금 간격이 2.5 면 62.5 처럼 한 자리까지(반올림해 63 으로 보이지 않게)
+  const tickDec = Number.isInteger(Number(step.toFixed(6))) ? 0 : Number.isInteger(Number((step * 10).toFixed(6))) ? 1 : 2;
+  const grid = m.yTicks.map((t) => `<line class="grid" x1="${box.left}" x2="${w - box.right}" y1="${t.y.toFixed(1)}" y2="${t.y.toFixed(1)}"/><text class="ax" x="${box.left - 6}" y="${(t.y + 4).toFixed(1)}" text-anchor="end">${fmt(t.v, tickDec)}</text>`).join('');
+  const xl = m.xTicks.map((t) => `<text class="ax" x="${t.x.toFixed(1)}" y="${box.h - 6}" text-anchor="middle">${esc(t.label)}</text>`).join('');
+  const n = m.xs.length - 1;
+  wrap.insertAdjacentHTML('beforeend', `<svg id="chart-svg" width="${w}" height="${box.h}" viewBox="0 0 ${w} ${box.h}" role="img" tabindex="0"
+    aria-label="${esc(currencyInfo(s.code).name)} ${s.years}년 원화 환율 선 그래프, 처음 ${fmtV(scaled[0][1])}원, 마지막 ${fmtV(scaled[n][1])}원">
+    ${grid}${xl}
+    <path class="area" d="${m.area}"/><path class="line" d="${m.line}"/>
+    <circle class="dot" cx="${m.xs[n].toFixed(1)}" cy="${m.ys[n].toFixed(1)}" r="4"/>
+    <line id="chart-cross" class="cross" x1="0" x2="0" y1="${box.top}" y2="${box.h - box.bottom}" visibility="hidden"/>
+    <circle id="chart-cdot" class="dot" r="4" visibility="hidden"/>
+  </svg>`);
+  const svg = /** @type {SVGSVGElement} */ (document.getElementById('chart-svg'));
+  const tip = /** @type {HTMLElement} */ (document.getElementById('chart-tip'));
+  const cross = svg.querySelector('#chart-cross');
+  const cdot = svg.querySelector('#chart-cdot');
+  const show = (i) => {
+    if (i < 0 || i > n) return;
+    s.idx = i;
+    const x = m.xs[i];
+    cross.setAttribute('x1', x.toFixed(1)); cross.setAttribute('x2', x.toFixed(1)); cross.setAttribute('visibility', 'visible');
+    cdot.setAttribute('cx', x.toFixed(1)); cdot.setAttribute('cy', m.ys[i].toFixed(1)); cdot.setAttribute('visibility', 'visible');
+    tip.textContent = '';
+    const b = document.createElement('b'); b.textContent = `${fmtV(scaled[i][1])}원`;
+    const sp = document.createElement('span'); sp.textContent = ` ${shortDay(scaled[i][0])}`;
+    tip.append(b, sp);
+    tip.style.visibility = 'visible';
+    const tw = tip.offsetWidth;
+    tip.style.left = `${Math.min(Math.max(x - tw / 2, 0), w - tw)}px`;
+  };
+  // x 로 가장 가까운 점(이분 탐색)
+  const nearest = (x) => {
+    let lo = 0; let hi = n;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (m.xs[mid] < x) lo = mid; else hi = mid; }
+    return x - m.xs[lo] <= m.xs[hi] - x ? lo : hi;
+  };
+  const onPoint = (e) => {
+    const r = svg.getBoundingClientRect();
+    show(nearest(((e.clientX - r.left) / r.width) * w));
+  };
+  svg.addEventListener('pointerdown', onPoint);
+  svg.addEventListener('pointermove', onPoint);
+  svg.addEventListener('keydown', (e) => {
+    const cur = s.idx >= 0 ? s.idx : n;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(Math.max(0, cur - 1)); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); show(Math.min(n, cur + 1)); }
+  });
+  if (s.idx >= 0 && s.idx <= n) show(s.idx);
+}
+
 /**
  * @param {string} code
  * @returns {number} 고시 단위(엔 100, 나머지 1)
@@ -1165,15 +1351,28 @@ async function onClick(el) {
     // 통화를 바꾸면 입력값은 0부터(49 MAD 를 보다가 USD 를 누르면 49 USD 가 남지 않게)
     case 'fx-code': if (fx.code !== d.code) { fx.input = ''; fx.terms = []; } fx.code = d.code; state.ui.code = fx.code; persist(); render(); break;
     case 'fx-more': {
-      const code = window.prompt('통화 코드(예: THB, INR, MAD)', fx.code);
-      if (!code) return;
-      const up = code.trim().toUpperCase();
-      if (!/^[A-Z]{3}$/.test(up)) { toast('통화 코드는 영문 3자'); return; }
-      if (fx.code !== up) { fx.input = ''; fx.terms = []; }
-      fx.code = up; state.ui.code = up;
-      if (!state.favorites.includes(up)) state.favorites.unshift(up);
+      sheet = { type: 'cur', q: '' };
+      renderSheet();
+      document.getElementById('cur-q')?.focus();
+      break;
+    }
+    case 'sheet-close': sheet = null; renderSheet(); break;
+    case 'cur-pick': {
+      const c = d.code;
+      if (!c) return;
+      if (!state.favorites.includes(c)) state.favorites.unshift(c);
+      if (fx.code !== c) { fx.input = ''; fx.terms = []; }
+      fx.code = c; state.ui.code = c; state.ui.tab = 'fx';
+      sheet = null; renderSheet();
       persist(); render(); break;
     }
+    case 'cur-del': {
+      const c = d.code;
+      state.favorites = state.favorites.filter((x) => x !== c);
+      persist(); render(); updateCurSheet(); toast(`${c} 버튼을 뺌`); break;
+    }
+    case 'chart-open': openChart(d.code || fx.code); break;
+    case 'chart-range': if (sheet?.type === 'chart') { sheet.years = Number(d.years) || 5; sheet.idx = -1; renderSheet(); } break;
     case 'fx-key': {
       const k = d.key;
       if (k === 'back') {
@@ -1531,6 +1730,16 @@ view.addEventListener('keydown', (e) => {
     e.preventDefault(); saveDraft();
   }
 });
+sheetEl.addEventListener('click', (e) => {
+  if (e.target === sheetEl) { sheet = null; renderSheet(); return; }
+  const el = e.target instanceof Element ? e.target.closest('[data-action]') : null;
+  if (el && !(el instanceof HTMLInputElement)) onClick(/** @type {HTMLElement} */ (el)).catch((err) => logger.error(err));
+});
+sheetEl.addEventListener('input', (e) => {
+  const el = e.target;
+  if (el instanceof HTMLInputElement && el.dataset.action === 'cur-q' && sheet?.type === 'cur') { sheet.q = el.value; updateCurSheet(); }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheet) { sheet = null; renderSheet(); } });
 tabs.addEventListener('click', (e) => {
   const b = e.target instanceof Element ? e.target.closest('button[data-tab]') : null;
   if (!b) return;
