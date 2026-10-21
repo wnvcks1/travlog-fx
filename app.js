@@ -84,7 +84,7 @@ function fallbackFxCode(removed) {
   for (let i = fx.prev.length - 1; i >= 0; i -= 1) if (shown.includes(fx.prev[i])) return fx.prev[i];
   const trip = tripFxCode();
   if (shown.includes(trip)) return trip;
-  return shown[0] || 'USD';
+  return shown.find((c) => c !== 'KRW') || shown[0] || 'USD';
 }
 
 /** @returns {number} 키패드 총합 */
@@ -421,11 +421,13 @@ function targetsFor(code) {
 
 /** @returns {string} */
 function renderFx() {
+  // 버튼 줄에 없는 통화는 화면에 두지 않음(Chan 2026-10-21: 뺀 중국 돈이 위에 계속 남아 있었음).
+  // 찾기 창 ✕ 빼기, 설정 즐겨찾기 해제, 예전 버전에서 남은 상태 어디서 왔든 여기서 정리
+  if (!fxChipCodes().includes(fx.code)) setFxCode(fallbackFxCode(fx.code));
   const code = fx.code;
   const info = currencyInfo(code);
   const amt = fxTotal();
-  const base = fxChipCodes();
-  const favs = base.includes(code) ? base : [code, ...base];
+  const favs = fxChipCodes();
   // 통화 코드 아래 국기·나라 이름(Chan 2026-10-21: "MXN" 만으론 어느 나라인지 바로 안 보임)
   const chips = favs.map((c) => `<button class="chip cur ${c === code ? 'on' : ''}" data-action="fx-code" data-code="${esc(c)}"><span class="cc">${esc(c)}</span>${countryLabel(c) ? `<span class="cn">${esc(countryLabel(c))}</span>` : ''}</button>`).join('')
     + '<button class="chip more" data-action="fx-more">+ 통화</button>';
@@ -1802,9 +1804,28 @@ refreshRates({ silent: true }).then(() => applyHashImport()).then(() => syncNow(
 // 앱이 이미 열려 있는 상태에서 가져오기 링크를 누르면 주소만 바뀌고 새로 안 뜸 → 그때도 처리
 window.addEventListener('hashchange', () => { applyHashImport().catch((e) => logger.error('가져오기 실패', e)); });
 
+/** @type {ServiceWorkerRegistration|null} */
+let swReg = null;
+let pendingReload = false;
+let resumedAt = STARTED_AT;
+
+/** @returns {boolean} 적다 만 게 없음(새로고침해도 잃을 게 없음) */
+function appIdle() {
+  const focused = document.activeElement?.matches?.('input, textarea, select');
+  return !fx.input && !fx.terms.length && !sheet && !editingId && !draft.amount && !draft.desc && !focused;
+}
+
+/** 새 버전이 받아져 있고 적던 게 없으면 새로고침해서 적용 */
+function applyUpdateIfIdle() {
+  if (pendingReload && appIdle()) window.location.reload();
+}
+
 // 자동 갱신: 화면에 돌아왔을 때(10분 지났으면), 온라인 복귀, 30분마다
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) return;
+  // 안드로이드 홈 화면 앱은 다시 열어도 새로 안 뜸 → 내려갈 때 새 버전 적용, 올라올 때 새 버전 확인
+  if (document.hidden) { applyUpdateIfIdle(); return; }
+  resumedAt = Date.now();
+  swReg?.update().catch(() => {});
   if (Date.now() - lastRefreshAt > 10 * 60 * 1000) refreshRates({ silent: true }).catch((e) => logger.warn(e));
   if (state.sync.code) syncNow({ quiet: true }).catch(() => {});
 });
@@ -1813,17 +1834,18 @@ window.setInterval(() => { if (!document.hidden) refreshRates({ silent: true }).
 window.setInterval(() => { if (!document.hidden && state.sync.code) syncNow({ quiet: true }).catch(() => {}); }, 60 * 1000);
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  let reloading = false;
   let firstClaim = !navigator.serviceWorker.controller; // 첫 설치의 claim 은 업데이트가 아님
-  // 새 버전 서비스워커가 자리를 잡으면 앱을 연 직후엔 바로 새로고침, 쓰는 중이면 안내만
+  // 새 버전 서비스워커가 자리를 잡으면: 열거나 돌아온 직후(20초)이고 적던 게 없으면 바로 새로고침.
+  // 쓰는 중이면 안내만 하고, 앱을 내릴 때(적던 게 없으면) 적용
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (firstClaim) { firstClaim = false; return; }
-    if (reloading) return;
-    reloading = true;
-    if (Date.now() - STARTED_AT < 8000 || document.hidden) window.location.reload();
-    else toast('새 버전 준비됨. 다음에 열면 적용');
+    if (pendingReload) return;
+    pendingReload = true;
+    if (document.hidden || Date.now() - resumedAt < 20000) applyUpdateIfIdle();
+    toast('새 버전 준비됨. 앱을 내렸다 다시 열면 적용');
   });
   navigator.serviceWorker.register('./sw.js').then((reg) => {
+    swReg = reg;
     reg.update().catch(() => {});
   }).catch((e) => logger.warn('SW 등록 실패', e));
 }
