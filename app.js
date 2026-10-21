@@ -2,7 +2,7 @@
  * 트래블로그 환율·정산 PWA UI. 빌드 없이 브라우저 ES module 로 바로 실행.
  * 상태는 store.js(localStorage), 계산은 calc.js, 환율 로딩은 rates.js.
  */
-import { CURRENCIES, currencyInfo, findCurrency, searchCurrencies } from './currencies.js';
+import { CURRENCIES, currencyInfo, findCurrency, searchCurrencies, countryOf } from './currencies.js';
 import { loadHistory, hasHistory, sliceYears, summarize, chartModel, ECB_CODES, PEGS } from './history.js';
 import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
@@ -300,15 +300,13 @@ function displayInput(s) {
 }
 
 /**
+ * 국기 + 나라 이름. 표에 없는 통화는 빈 문자열.
  * @param {string} code
- * @returns {string}
+ * @returns {string} 예: "🇲🇽 멕시코"
  */
-function travlogPill(code) {
-  const t = currencyInfo(code).travlog;
-  if (t === 'always') return '<span class="pill">무료환전</span>';
-  if (t === 'event') return '<span class="pill">무료환전·이벤트</span>';
-  if (code === 'KRW') return '';
-  return '<span class="pill">USD 지갑 결제</span>';
+function countryLabel(code) {
+  const ct = countryOf(code);
+  return ct ? `${ct.flag} ${ct.name}` : '';
 }
 
 /**
@@ -388,7 +386,8 @@ function renderFx() {
   const tripCode = activeTrip().code;
   const base = [tripCode, ...state.favorites].filter((c, i, a) => c && a.indexOf(c) === i);
   const favs = base.includes(code) ? base : [code, ...base];
-  const chips = favs.map((c) => `<button class="chip ${c === code ? 'on' : ''}" data-action="fx-code" data-code="${esc(c)}">${esc(c)}</button>`).join('')
+  // 통화 코드 아래 국기·나라 이름(Chan 2026-10-21: "MXN" 만으론 어느 나라인지 바로 안 보임)
+  const chips = favs.map((c) => `<button class="chip cur ${c === code ? 'on' : ''}" data-action="fx-code" data-code="${esc(c)}"><span class="cc">${esc(c)}</span>${countryLabel(c) ? `<span class="cn">${esc(countryLabel(c))}</span>` : ''}</button>`).join('')
     + '<button class="chip more" data-action="fx-more">+ 통화</button>';
   const unsupported = (c) => c !== 'KRW' && currencyInfo(c).travlog === 'none';
 
@@ -448,7 +447,7 @@ function renderFx() {
   return `
   <section class="card">
     <div class="chips">${chips}</div>
-    <div class="muted">${esc(info.name)} 입력 ${travlogPill(code)}${code !== 'KRW' ? '<button class="mini" data-action="chart-open">📈 차트</button>' : ''}</div>
+    <div class="muted">${esc(info.name)} 입력${code !== 'KRW' ? '<button class="mini" data-action="chart-open">📈 차트</button>' : ''}</div>
     ${expr}
     <div class="amount"><span class="num">${big}</span><span class="unit">${esc(code === 'KRW' ? '원' : code)}</span></div>
     <div class="results">${cards}</div>
@@ -956,7 +955,7 @@ function curResults(q) {
   if (!q.trim()) return '<p class="hint">나라 이름(멕시코), 통화 이름(페소), 도시(방콕), 영문 코드(THB) 아무거나.</p>';
   const list = searchCurrencies(q, 15).filter((c) => c.code !== 'KRW');
   if (!list.length) return '<p class="hint">못 찾음. 다른 이름이나 영문 3자 코드로 찾아 볼 것.</p>';
-  return list.map((c) => `<div class="cur-row"><span class="code">${esc(c.code)}</span><span class="nm">${esc(c.name)}${state.favorites.includes(c.code) ? ' · <small>버튼 있음</small>' : ''}</span>
+  return list.map((c) => `<div class="cur-row"><span class="code">${esc(c.code)}</span><span class="nm">${esc(countryOf(c.code)?.flag || '')} ${esc(c.name)}${state.favorites.includes(c.code) ? ' · <small>버튼 있음</small>' : ''}</span>
     ${hasHistory(c.code) ? `<button class="btn sm" data-action="chart-open" data-code="${esc(c.code)}" aria-label="${esc(c.name)} 차트">📈</button>` : ''}
     <button class="btn sm primary" data-action="cur-pick" data-code="${esc(c.code)}">보기</button></div>`).join('');
 }
@@ -964,7 +963,7 @@ function curResults(q) {
 /** @returns {string} 지금 환율 탭 버튼 줄의 통화들(✕ 로 빼기) */
 function curMine() {
   if (!state.favorites.length) return '<p class="hint">없음. 위에서 찾아 추가.</p>';
-  return state.favorites.map((c) => `<div class="cur-row"><span class="code">${esc(c)}</span><span class="nm">${esc(currencyInfo(c).name)}</span><button class="del" data-action="cur-del" data-code="${esc(c)}" aria-label="${esc(c)} 빼기">✕ 빼기</button></div>`).join('');
+  return state.favorites.map((c) => `<div class="cur-row"><span class="code">${esc(c)}</span><span class="nm">${esc(countryOf(c)?.flag || '')} ${esc(currencyInfo(c).name)}</span><button class="del" data-action="cur-del" data-code="${esc(c)}" aria-label="${esc(c)} 빼기">✕ 빼기</button></div>`).join('');
 }
 
 /** 검색어 칠 때·뺄 때는 창 전체를 다시 그리지 않음(입력 중 글자·키보드 유지) */

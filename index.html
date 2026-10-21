@@ -61,6 +61,8 @@ h2{font-size:.95rem;margin:0 0 8px;color:var(--sub);font-weight:600;}
 .chip{flex:0 0 auto;background:var(--chip);border-radius:999px;padding:8px 14px;font-size:.92rem;min-height:40px;border:1px solid transparent;}
 .chip.on{background:var(--chip-on);color:var(--accent-text);font-weight:600;}
 .chip.more{border:1px dashed var(--border);background:transparent;color:var(--sub);}
+.chip.cur{display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;line-height:1.15;border-radius:14px;}
+.chip .cn{font-size:.66rem;font-weight:400;opacity:.85;white-space:nowrap;}
 .seg{display:flex;background:var(--chip);border-radius:12px;padding:4px;gap:4px;margin:6px 0 10px;}
 .seg button{flex:1;padding:10px 6px;border-radius:9px;font-size:.92rem;color:var(--sub);min-height:42px;}
 .seg button.on{background:var(--card);color:var(--text);font-weight:700;box-shadow:var(--shadow);}
@@ -178,6 +180,8 @@ body.fx .tabs{position:static;flex:0 0 auto;}
 body.fx section.card{flex:1;display:flex;flex-direction:column;min-height:0;margin:0;padding:8px 10px 10px;}
 body.fx .chips{padding:2px 0 4px;gap:6px;}
 body.fx .chip{min-height:34px;padding:5px 12px;font-size:.88rem;}
+body.fx .chip.cur{padding:3px 9px;}
+body.fx .chip.more{padding:5px 10px;}
 body.fx .muted{font-size:.78rem;}
 body.fx .amount{min-height:44px;padding:2px 4px 0;}
 body.fx .expr{font-size:.8rem;}

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHistory, sliceYears, summarize, niceTicks, chartModel, loadHistory, hasHistory, PEGS } from '../history.js';
-import { searchCurrencies, findCurrency, currencyInfo } from '../currencies.js';
+import { searchCurrencies, findCurrency, currencyInfo, countryOf, CURRENCIES } from '../currencies.js';
 
 const sample = { base: 'MXN', rates: { '2021-10-20': { KRW: 58.1 }, '2021-10-19': { KRW: 57.9 }, '2024-05-02': { KRW: 80.2 }, '2025-10-17': { KRW: 70 }, '2026-10-19': { KRW: 71.9 }, bad: { KRW: 1 }, '2026-10-18': { KRW: null } } };
 
@@ -72,4 +72,18 @@ test('searchCurrencies: 나라 이름 일부·통화 이름·코드·도시', ()
   assert.equal(findCurrency('타히티'), 'XPF');
   assert.equal(findCurrency('프랑스'), 'EUR');
   assert.equal(currencyInfo('PEN').travlog, 'none');
+});
+
+test('countryOf: 모든 통화에 국기·나라 이름', () => {
+  for (const c of CURRENCIES) {
+    const ct = countryOf(c.code);
+    assert.ok(ct, `${c.code} 나라 없음`);
+    assert.equal([...ct.flag].length, 2, `${c.code} 국기`);
+    assert.ok(ct.name.length > 0 && ct.name.length <= 6, `${c.code} 이름 길이 ${ct.name}`);
+  }
+  assert.deepEqual(countryOf('MXN'), { flag: '🇲🇽', name: '멕시코' });
+  assert.deepEqual(countryOf('EUR'), { flag: '🇪🇺', name: '유럽' });
+  assert.deepEqual(countryOf('KRW'), { flag: '🇰🇷', name: '한국' });
+  assert.equal(countryOf('XXX'), null);
+  assert.equal(searchCurrencies('유럽')[0].code, 'EUR');
 });

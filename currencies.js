@@ -114,6 +114,44 @@ export const CURRENCIES = [
 /** @type {Record<string, Currency>} */
 export const BY_CODE = Object.fromEntries(CURRENCIES.map((c) => [c.code, c]));
 
+/**
+ * 통화 → [ISO 3166 나라 코드, 짧은 나라 이름]. 환율 탭 통화 버튼 아래 "🇲🇽 멕시코" 표시용.
+ * 유로는 EU 깃발, XPF 는 프랑스령 폴리네시아(PF). 버튼 폭 때문에 긴 이름은 줄임(도미니카, 보스니아).
+ */
+const COUNTRY = {
+  USD: ['US', '미국'], JPY: ['JP', '일본'], EUR: ['EU', '유럽'], GBP: ['GB', '영국'], CAD: ['CA', '캐나다'],
+  CNY: ['CN', '중국'], SGD: ['SG', '싱가포르'], AUD: ['AU', '호주'], VND: ['VN', '베트남'], HKD: ['HK', '홍콩'],
+  THB: ['TH', '태국'], CHF: ['CH', '스위스'], PHP: ['PH', '필리핀'], SEK: ['SE', '스웨덴'], IDR: ['ID', '인도네시아'],
+  NZD: ['NZ', '뉴질랜드'], HUF: ['HU', '헝가리'], CZK: ['CZ', '체코'], NOK: ['NO', '노르웨이'], TWD: ['TW', '대만'],
+  DKK: ['DK', '덴마크'], MYR: ['MY', '말레이시아'], MXN: ['MX', '멕시코'], AED: ['AE', '아랍에미리트'], TRY: ['TR', '튀르키예'],
+  PLN: ['PL', '폴란드'], SAR: ['SA', '사우디'], KWD: ['KW', '쿠웨이트'], BHD: ['BH', '바레인'], ZAR: ['ZA', '남아공'],
+  BRL: ['BR', '브라질'], MOP: ['MO', '마카오'], MNT: ['MN', '몽골'], MMK: ['MM', '미얀마'], ILS: ['IL', '이스라엘'],
+  EGP: ['EG', '이집트'], INR: ['IN', '인도'], QAR: ['QA', '카타르'], KHR: ['KH', '캄보디아'], KES: ['KE', '케냐'],
+  FJD: ['FJ', '피지'], NPR: ['NP', '네팔'], RON: ['RO', '루마니아'], BDT: ['BD', '방글라데시'], BND: ['BN', '브루나이'],
+  LKR: ['LK', '스리랑카'], JOD: ['JO', '요르단'], UZS: ['UZ', '우즈베키스탄'], CLP: ['CL', '칠레'], KZT: ['KZ', '카자흐스탄'],
+  COP: ['CO', '콜롬비아'], TZS: ['TZ', '탄자니아'], PKR: ['PK', '파키스탄'], DZD: ['DZ', '알제리'], ETB: ['ET', '에티오피아'],
+  OMR: ['OM', '오만'], MAD: ['MA', '모로코'], ARS: ['AR', '아르헨티나'], PEN: ['PE', '페루'], BOB: ['BO', '볼리비아'],
+  UYU: ['UY', '우루과이'], PYG: ['PY', '파라과이'], CRC: ['CR', '코스타리카'], GTQ: ['GT', '과테말라'], DOP: ['DO', '도미니카'],
+  CUP: ['CU', '쿠바'], JMD: ['JM', '자메이카'], ISK: ['IS', '아이슬란드'], RSD: ['RS', '세르비아'], BAM: ['BA', '보스니아'],
+  MKD: ['MK', '북마케도니아'], ALL: ['AL', '알바니아'], GEL: ['GE', '조지아'], AMD: ['AM', '아르메니아'], AZN: ['AZ', '아제르바이잔'],
+  UAH: ['UA', '우크라이나'], RUB: ['RU', '러시아'], KGS: ['KG', '키르기스스탄'], LAK: ['LA', '라오스'], MVR: ['MV', '몰디브'],
+  MUR: ['MU', '모리셔스'], SCR: ['SC', '세이셸'], NGN: ['NG', '나이지리아'], GHS: ['GH', '가나'], TND: ['TN', '튀니지'],
+  XPF: ['PF', '폴리네시아'], KRW: ['KR', '한국'],
+};
+
+/**
+ * 통화의 국기 이모지와 나라 이름. 표에 없는 통화(er-api 에서만 오는 것)는 null.
+ * @param {string} code ISO 4217
+ * @returns {{flag:string,name:string}|null}
+ */
+export function countryOf(code) {
+  const c = COUNTRY[code];
+  if (!c) return null;
+  // 국기 이모지 = 나라 코드 두 글자를 regional indicator 문자로 바꾼 것(MX → 🇲 🇽)
+  const flag = String.fromCodePoint(...[...c[0]].map((ch) => 0x1F1E6 + ch.charCodeAt(0) - 65));
+  return { flag, name: c[1] };
+}
+
 /** 트래블로그 지갑 통화 개수(KRW·MAD 제외). 공식 58종 중 확인·추정 56종. */
 export const TRAVLOG_COUNT = CURRENCIES.filter((c) => c.travlog !== 'none').length;
 
@@ -165,6 +203,7 @@ export function searchCurrencies(q, limit = 20) {
     else if (name === ns) s = 90;
     else if (c.name.startsWith(t) || name.startsWith(ns)) s = 80;
     else if (name.includes(ns)) s = 60;
+    else if (COUNTRY[c.code]?.[1] === ns) s = 85;
     else if (/^[A-Z]{1,3}$/.test(up) && c.code.startsWith(up)) s = 50;
     if (s) scored.push([s, c]);
   }
