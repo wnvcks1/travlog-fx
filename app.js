@@ -54,7 +54,38 @@ function followTripCurrency(prev) {
 
 // terms: '+' 로 확정한 금액들. 변환은 항상 terms 합 + 지금 입력 중인 값(total) 기준
 // 새로고침하면 여행 통화부터(Chan 2026-10-03: 중국 여행 중 USD 로 뜨던 문제)
-const fx = { input: '', code: tripFxCode(), terms: /** @type {number[]} */ ([]) };
+// prev: 전에 보던 통화들(오래된 것 → 최근). 보던 통화를 버튼에서 빼면 여기서 돌아갈 곳을 찾음
+const fx = { input: '', code: tripFxCode(), terms: /** @type {number[]} */ ([]), prev: /** @type {string[]} */ ([]) };
+
+/**
+ * 환율 탭 통화 바꾸기. 통화가 바뀌면 입력값은 0부터(49 MAD 를 보다가 USD 를 누르면 49 USD 가 남지 않게).
+ * @param {string} c 새 통화
+ */
+function setFxCode(c) {
+  if (fx.code !== c) {
+    fx.input = ''; fx.terms = [];
+    fx.prev = [...fx.prev.filter((x) => x !== fx.code && x !== c), fx.code].slice(-10);
+  }
+  fx.code = c; state.ui.code = c;
+}
+
+/** @returns {string[]} 환율 탭 버튼 줄에 늘 있는 통화: 지금 여행 통화 + 내 통화 */
+function fxChipCodes() {
+  return [activeTrip().code, ...state.favorites].filter((c, i, a) => c && a.indexOf(c) === i);
+}
+
+/**
+ * 보던 통화를 버튼에서 뺐을 때 돌아갈 통화. 바로 전에 보던 것 중 버튼에 남은 것 → 여행 통화 → 첫 버튼.
+ * @param {string} removed 뺀 통화
+ * @returns {string}
+ */
+function fallbackFxCode(removed) {
+  const shown = fxChipCodes().filter((c) => c !== removed);
+  for (let i = fx.prev.length - 1; i >= 0; i -= 1) if (shown.includes(fx.prev[i])) return fx.prev[i];
+  const trip = tripFxCode();
+  if (shown.includes(trip)) return trip;
+  return shown[0] || 'USD';
+}
 
 /** @returns {number} 키패드 총합 */
 function fxTotal() { return fx.terms.reduce((a, b) => a + b, 0) + parseAmount(fx.input); }
@@ -393,8 +424,7 @@ function renderFx() {
   const code = fx.code;
   const info = currencyInfo(code);
   const amt = fxTotal();
-  const tripCode = activeTrip().code;
-  const base = [tripCode, ...state.favorites].filter((c, i, a) => c && a.indexOf(c) === i);
+  const base = fxChipCodes();
   const favs = base.includes(code) ? base : [code, ...base];
   // 통화 코드 아래 국기·나라 이름(Chan 2026-10-21: "MXN" 만으론 어느 나라인지 바로 안 보임)
   const chips = favs.map((c) => `<button class="chip cur ${c === code ? 'on' : ''}" data-action="fx-code" data-code="${esc(c)}"><span class="cc">${esc(c)}</span>${countryLabel(c) ? `<span class="cn">${esc(countryLabel(c))}</span>` : ''}</button>`).join('')
@@ -1357,8 +1387,7 @@ async function onClick(el) {
   const a = el.dataset.action;
   const d = el.dataset;
   switch (a) {
-    // 통화를 바꾸면 입력값은 0부터(49 MAD 를 보다가 USD 를 누르면 49 USD 가 남지 않게)
-    case 'fx-code': if (fx.code !== d.code) { fx.input = ''; fx.terms = []; } fx.code = d.code; state.ui.code = fx.code; persist(); render(); break;
+    case 'fx-code': setFxCode(d.code); persist(); render(); break;
     case 'fx-more': {
       sheet = { type: 'cur', q: '' };
       renderSheet();
@@ -1370,15 +1399,18 @@ async function onClick(el) {
       const c = d.code;
       if (!c) return;
       if (!state.favorites.includes(c)) state.favorites.unshift(c);
-      if (fx.code !== c) { fx.input = ''; fx.terms = []; }
-      fx.code = c; state.ui.code = c; state.ui.tab = 'fx';
+      setFxCode(c); state.ui.tab = 'fx';
       sheet = null; renderSheet();
       persist(); render(); break;
     }
     case 'cur-del': {
       const c = d.code;
       state.favorites = state.favorites.filter((x) => x !== c);
-      persist(); render(); updateCurSheet(); toast(`${c} 버튼을 뺌`); break;
+      // 보던 통화를 빼면 바로 전에 보던 통화로(Chan 2026-10-21: 빼도 화면에 남아 있다가 다른 통화를 눌러야 사라졌음)
+      let back = '';
+      if (fx.code === c && !fxChipCodes().includes(c)) { back = fallbackFxCode(c); setFxCode(back); }
+      fx.prev = fx.prev.filter((x) => x !== c);
+      persist(); render(); updateCurSheet(); toast(back ? `${c} 버튼을 뺌 → ${back} 보는 중` : `${c} 버튼을 뺌`); break;
     }
     case 'chart-open': openChart(d.code || fx.code); break;
     case 'chart-range': if (sheet?.type === 'chart') { sheet.years = Number(d.years) || 5; sheet.idx = -1; renderSheet(); } break;
