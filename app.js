@@ -310,6 +310,16 @@ function countryLabel(code) {
 }
 
 /**
+ * 이름 앞에 붙일 국기. 표에 없는 통화는 빈 문자열.
+ * @param {string} code
+ * @returns {string} 예: "🇲🇽 "
+ */
+function flagPrefix(code) {
+  const f = countryOf(code)?.flag;
+  return f ? `${f} ` : '';
+}
+
+/**
  * @param {string} code
  * @returns {number|null} USD 1 달러당 현지 통화(교차)
  */
@@ -683,7 +693,7 @@ function renderSettle() {
   const trip = activeTrip();
   if (!draft.code) draft.code = trip.code || 'MAD';
   const items = [...trip.items].sort((a, b) => b.ts - a.ts);
-  const tripSel = `<select data-action="trip-select">${state.trips.map((t) => `<option value="${esc(t.id)}" ${t.id === trip.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`;
+  const tripSel = `<select data-action="trip-select">${state.trips.map((t) => `<option value="${esc(t.id)}" ${t.id === trip.id ? 'selected' : ''}>${esc(flagPrefix(t.code) + t.name)}</option>`).join('')}</select>`;
   const payerBtns = state.people.map((p) => `<button class="${draft.payer === p ? 'on' : ''}" data-action="draft-payer" data-payer="${esc(p)}">${esc(p)}</button>`).join('');
   // 새 항목은 현금이 기본, 수정 중인 항목은 지금 잡혀 있는 결제를 보여 줌
   const shownPay = draft.pay || (editingId ? payMethod({ code: draft.code }, trip) : defaultEntryPay(trip));
