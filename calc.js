@@ -391,6 +391,42 @@ export function localDay(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/** @typedef {'+'|'-'|'*'|'/'} CalcOp */
+
+/**
+ * 환율 탭 키패드 식 계산. 곱하기·나누기를 먼저(폰 계산기와 같음): 100 + 20 × 3 = 160.
+ * terms 는 확정한 숫자와 그 뒤에 누른 연산자. last 가 null 이면 마지막 연산자는 아직 짝이 없어 무시함
+ * ("100 × " → 100). 0 으로 나누면 NaN(화면에서 안내).
+ * @param {Array<{v:number, op:CalcOp}>} terms
+ * @param {number|null} last 지금 입력 중인 숫자. 없으면 null
+ * @returns {number}
+ */
+export function evalTerms(terms, last) {
+  const nums = terms.map((t) => t.v);
+  const ops = terms.map((t) => t.op);
+  if (last === null) ops.pop();
+  else nums.push(last);
+  if (!nums.length) return 0;
+  if (nums.some((n) => !Number.isFinite(n))) return NaN;
+  // 1단계: × ÷ 를 왼쪽부터 접어서 덧셈 항만 남김
+  const sums = [nums[0]];
+  const signs = ['+'];
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i];
+    const n = nums[i + 1];
+    if (op === '*') sums[sums.length - 1] *= n;
+    else if (op === '/') {
+      if (n === 0) return NaN;
+      sums[sums.length - 1] /= n;
+    } else if (op === '+' || op === '-') { sums.push(n); signs.push(op); }
+    else throw new RangeError(`모르는 연산자: ${op}`);
+  }
+  // 2단계: + − 를 왼쪽부터
+  const total = sums.reduce((acc, v, i) => (signs[i] === '-' ? acc - v : acc + v), 0);
+  // 부동소수 찌꺼기 제거(70.1 × 3 = 210.29999… → 210.3)
+  return Math.round(total * 1e10) / 1e10;
+}
+
 /**
  * 숫자를 자릿수 맞춰 천 단위 쉼표로. 표시 전용.
  * @param {number} n

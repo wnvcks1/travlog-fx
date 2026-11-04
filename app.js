@@ -4,7 +4,7 @@
  */
 import { CURRENCIES, currencyInfo, findCurrency, searchCurrencies, countryOf } from './currencies.js';
 import { loadHistory, hasHistory, sliceYears, summarize, chartModel, ECB_CODES, PEGS } from './history.js';
-import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay } from './calc.js';
+import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay, evalTerms } from './calc.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport, encodeImport } from './importer.js';
@@ -55,7 +55,7 @@ function followTripCurrency(prev) {
 // terms: '+' 로 확정한 금액들. 변환은 항상 terms 합 + 지금 입력 중인 값(total) 기준
 // 새로고침하면 여행 통화부터(Chan 2026-10-03: 중국 여행 중 USD 로 뜨던 문제)
 // prev: 전에 보던 통화들(오래된 것 → 최근). 보던 통화를 버튼에서 빼면 여기서 돌아갈 곳을 찾음
-const fx = { input: '', code: tripFxCode(), terms: /** @type {number[]} */ ([]), prev: /** @type {string[]} */ ([]) };
+const fx = { input: '', code: tripFxCode(), terms: /** @type {Array<{v:number, op:import('./calc.js').CalcOp}>} */ ([]), prev: /** @type {string[]} */ ([]) };
 
 /**
  * 환율 탭 통화 바꾸기. 통화가 바뀌면 입력값은 0부터(49 MAD 를 보다가 USD 를 누르면 49 USD 가 남지 않게).
@@ -87,8 +87,11 @@ function fallbackFxCode(removed) {
   return shown.find((c) => c !== 'KRW') || shown[0] || 'USD';
 }
 
-/** @returns {number} 키패드 총합 */
-function fxTotal() { return fx.terms.reduce((a, b) => a + b, 0) + parseAmount(fx.input); }
+/** 키패드 연산자 → 화면 기호 */
+const OP_SYM = { '+': '+', '-': '−', '*': '×', '/': '÷' };
+
+/** @returns {number} 키패드 식의 값(곱하기·나누기 먼저). 0 으로 나누면 NaN */
+function fxTotal() { return evalTerms(fx.terms, fx.input ? parseAmount(fx.input) : null); }
 /** @type {any} */
 let installEvt = null;
 /** @type {string|null} */
@@ -436,7 +439,10 @@ function renderFx() {
   let cards = '';
   let lines = [];
   let err = '';
-  try {
+  if (!Number.isFinite(amt)) {
+    err = '0 으로 나눌 수 없음. ⌫ 로 고칠 것';
+    cards = targetsFor(code).map((t) => `<div class="res"><div class="lbl">${esc(t)}</div><div class="v">—</div></div>`).join('');
+  } else try {
     const src = krwPerUnit(code, ctx());
     const krw = amt * src.rate;
     const usd = krwPerUnit('USD', ctx());
@@ -476,16 +482,20 @@ function renderFx() {
       cards = targetsFor(code).map((t) => `<div class="res"><div class="lbl">${esc(t)}</div><div class="v">—</div></div>`).join('');
     } else throw e;
   }
-  // 전화기 배열: 1·2·3 이 맨 위
-  // 4열: 1 2 3 ⌫ / 4 5 6 + / 7 8 9 + / . 0 0 +  (+ 는 세 줄, 0 은 두 칸)
-  const keys = ['1', '2', '3', 'back', '4', '5', '6', 'plus', '7', '8', '9', '.', '0'];
+  // 전화기 배열: 1·2·3 이 맨 위, 오른쪽 줄은 연산자(Chan 2026-11-04: + 위에 − × ÷)
+  // 4열: 1 2 3 ÷ / 4 5 6 × / 7 8 9 − / . 0 ⌫ +  — 줄 수는 그대로라 화면 한 장에 들어감
+  const keys = ['1', '2', '3', '/', '4', '5', '6', '*', '7', '8', '9', '-', '.', '0', 'back', '+'];
+  const opName = { '+': '더하기', '-': '빼기', '*': '곱하기', '/': '나누기' };
+  // 숫자 없이 연산자만 눌린 상태면 그 연산자를 눌린 모양으로(다른 연산자를 누르면 바뀜)
+  const pendingOp = !fx.input && fx.terms.length ? fx.terms[fx.terms.length - 1].op : '';
   const keypad = keys.map((k) => {
     if (k === 'back') return '<button class="key fn" data-action="fx-key" data-key="back" aria-label="지우기">⌫</button>';
-    if (k === 'plus') return '<button class="key plus" data-action="fx-key" data-key="+" aria-label="더하기">+</button>';
-    return `<button class="key${k === '0' ? ' zero' : ''}" data-action="fx-key" data-key="${k}">${k}</button>`;
+    if (k in OP_SYM) return `<button class="key op${k === pendingOp ? ' on' : ''}" data-action="fx-key" data-key="${k}" aria-label="${opName[k]}">${OP_SYM[k]}</button>`;
+    return `<button class="key" data-action="fx-key" data-key="${k}">${k}</button>`;
   }).join('');
-  const expr = fx.terms.length ? `<div class="expr">${esc([...fx.terms.map((t) => fmt(t, Number.isInteger(t) ? 0 : 2)), displayInput(fx.input)].join(' + '))} =</div>` : '';
-  const big = fx.terms.length ? fmt(amt, Number.isInteger(amt) ? 0 : 2) : displayInput(fx.input);
+  const exprText = fx.terms.map((t) => `${displayInput(String(t.v))} ${OP_SYM[t.op]}`).join(' ') + (fx.input ? ` ${displayInput(fx.input)} =` : '');
+  const expr = fx.terms.length ? `<div class="expr">${esc(exprText)}</div>` : '';
+  const big = !Number.isFinite(amt) ? '—' : fx.terms.length ? fmt(amt, Number.isInteger(amt) ? 0 : 2) : displayInput(fx.input);
   return `
   <section class="card">
     <div class="chips">${chips}</div>
@@ -1419,19 +1429,26 @@ async function onClick(el) {
     case 'fx-key': {
       const k = d.key;
       if (k === 'back') {
-        // 입력 중인 값이 없으면 마지막 '+' 를 되돌림
+        // 입력 중인 값이 없으면 마지막 연산자를 되돌리고 그 숫자를 다시 고치게
         if (fx.input) fx.input = fx.input.slice(0, -1);
-        else if (fx.terms.length) fx.input = String(fx.terms.pop());
-      } else if (k === '+') {
-        if (fx.input && parseAmount(fx.input) > 0 && fx.terms.length < 50) { fx.terms.push(parseAmount(fx.input)); fx.input = ''; }
+        else if (fx.terms.length) fx.input = String(fx.terms.pop().v);
+      } else if (k in OP_SYM) {
+        const op = /** @type {import('./calc.js').CalcOp} */ (k);
+        if (fx.input) {
+          if (fx.terms.length < 50) { fx.terms.push({ v: parseAmount(fx.input), op }); fx.input = ''; }
+        } else if (fx.terms.length) fx.terms[fx.terms.length - 1].op = op; // 연산자만 바꿈
       } else if (k === '.') { if (!fx.input.includes('.')) fx.input = (fx.input || '0') + '.'; }
       else if (fx.input.replace('.', '').length < 12) fx.input = fx.input === '0' ? k : fx.input + k;
       render(); break;
     }
     case 'fx-clear': fx.input = ''; fx.terms = []; render(); break;
     case 'fx-add': {
-      const amt = Math.round(fxTotal() * 100) / 100;
-      if (!(amt > 0)) { toast('금액을 먼저 넣어 줘'); return; }
+      const total = fxTotal();
+      const amt = Math.round(total * 100) / 100;
+      if (!(amt > 0)) {
+        toast(Number.isNaN(total) ? '0 으로 나눌 수 없음' : !fx.input && !fx.terms.length ? '금액을 먼저 넣어 줘' : '0보다 큰 금액만 정산에 넣을 수 있음');
+        return;
+      }
       draft = { payer: draft.payer, desc: '', amount: String(amt), code: fx.code, forWho: '', pay: '', date: '' };
       fx.input = ''; fx.terms = [];
       editingId = null;

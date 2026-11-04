@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   krwPerUnit, toKrw, fromKrw, toCad, fromCad, convert, refundLoss, itemKrw, settle, fmt, ageHours, RateMissingError, payMethod, cashBalances, groupByDay, withDay, defaultEntryPay,
-  duplicateGroups, itemKey,
+  duplicateGroups, itemKey, evalTerms,
 } from '../calc.js';
 import { CURRENCIES, TRAVLOG_COUNT, currencyInfo, findCurrency } from '../currencies.js';
 
@@ -299,4 +299,26 @@ test('새 항목 결제 기본: 모든 여행 현금, 여행을 카드로 정한
   assert.equal(defaultEntryPay({ code: 'KRW' }), 'cash');
   assert.equal(defaultEntryPay({ code: 'USD', pay: 'cash' }), 'cash');
   assert.equal(defaultEntryPay({ code: 'JPY', pay: 'card' }), 'card');
+});
+
+test('evalTerms: 사칙연산, 곱하기·나누기 먼저', () => {
+  const T = (...a) => a.map(([v, op]) => ({ v, op }));
+  assert.equal(evalTerms([], null), 0);
+  assert.equal(evalTerms([], 49), 49);
+  assert.equal(evalTerms(T([100, '+']), 20), 120);
+  assert.equal(evalTerms(T([100, '+']), null), 100);           // "100 + " → 100
+  assert.equal(evalTerms(T([100, '*']), null), 100);           // "100 × " → 100
+  assert.equal(evalTerms(T([100, '-']), 30), 70);
+  assert.equal(evalTerms(T([100, '+'], [20, '*']), 3), 160);   // 100 + 20 × 3
+  assert.equal(evalTerms(T([100, '-'], [20, '/']), 4), 95);    // 100 − 20 ÷ 4
+  assert.equal(evalTerms(T([2, '*'], [3, '+'], [4, '*']), 5), 26);
+  assert.equal(evalTerms(T([100, '/'], [4, '/']), 5), 5);      // 왼쪽부터: (100÷4)÷5
+  assert.equal(evalTerms(T([10, '-'], [3, '-']), 2), 5);       // (10−3)−2
+  assert.equal(evalTerms(T([70.1, '*']), 3), 210.3);           // 부동소수 찌꺼기
+  assert.equal(evalTerms(T([0.1, '+']), 0.2), 0.3);
+  assert.equal(evalTerms(T([1917, '/']), 2), 958.5);
+  assert.equal(evalTerms(T([50, '-']), 100), -50);
+  assert.ok(Number.isNaN(evalTerms(T([10, '/']), 0)));         // 0 으로 나누기
+  assert.equal(evalTerms(T([10, '/']), null), 10);             // 아직 0 안 쳤으면 그대로
+  assert.throws(() => evalTerms(T([1, '%']), 2), RangeError);
 });
