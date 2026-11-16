@@ -8,7 +8,7 @@ import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashB
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport, encodeImport } from './importer.js';
-import { metaOf, buildPush, applyRemote, callSync, newRoomCode, normalizeCode } from './sync.js';
+import { metaOf, buildPush, applyRemote, callSync, newRoomCode, normalizeCode, fmtRoomCode } from './sync.js';
 
 const logger = {
   /** @param {...unknown} a */ info: (...a) => console.info('[travlog]', ...a),
@@ -195,6 +195,7 @@ async function syncNow(opts = {}) {
     const prevTripCode = activeTrip().code;
     // 보낸 항목은 서버가 같은 rev 로 돌려주면 dirty 가 풀림. 삭제 기록은 서버에 들어갔으니 비움
     const r = applyRemote(state, remote);
+    adoptServerCode(remote);
     if (r.metaApplied) followTripCurrency(prevTripCode);
     const sentIds = new Set(push.items.filter((i) => i.deleted).map((i) => i.id));
     state.tombstones = state.tombstones.filter((tb) => !sentIds.has(tb.id));
@@ -220,6 +221,18 @@ async function syncNow(opts = {}) {
 }
 
 /**
+ * 서버가 알려 준 방 코드로 바꿈. 옛 6자 코드는 서버가 30일 동안 새 8자 방으로 이어 주고
+ * 응답의 code 로 새 코드를 알려 줌(2026-11-16 방 코드 8자 이전).
+ * @param {{code?:string}} remote
+ */
+function adoptServerCode(remote) {
+  const c = normalizeCode(remote?.code || '');
+  if (!c || !state.sync.code || c === state.sync.code) return;
+  state.sync.code = c;
+  toast(`방 코드가 8자리로 바뀜: ${fmtRoomCode(c)}. 서정이 폰도 자동으로 바뀜`);
+}
+
+/**
  * 방 만들기: 코드 생성, 이 폰 내용 전부 올림.
  * @returns {Promise<void>}
  */
@@ -233,7 +246,7 @@ async function createRoom() {
     lastMetaSig = JSON.stringify(metaOf(state));
     syncError = '';
     saveState(state); render();
-    toast(`방 ${code} 만듦. 서정이 폰 설정에 이 코드를 넣으면 같이 씀`);
+    toast(`방 ${fmtRoomCode(code)} 만듦. 서정이 폰 설정에 이 코드를 넣으면 같이 씀`);
   } catch (e) { toast(`방 만들기 실패: ${e.message}`); }
 }
 
@@ -244,15 +257,17 @@ async function createRoom() {
  * @returns {Promise<boolean>}
  */
 async function joinRoom(raw, opts = {}) {
-  const code = normalizeCode(raw);
-  if (!code) { toast('방 코드는 영문·숫자 6자'); return false; }
+  const typed = normalizeCode(raw);
+  if (!typed) { toast('방 코드는 영문·숫자 8자'); return false; }
   let remote;
-  try { remote = await callSync({ code, items: [] }); } catch (e) { toast(e.message); return false; }
+  try { remote = await callSync({ code: typed, items: [] }); } catch (e) { toast(e.message); return false; }
+  // 옛 6자 코드로 들어오면 서버가 새 8자 코드를 돌려줌 → 그걸로 연결
+  const code = normalizeCode(remote.code || '') || typed;
   const remoteLive = (remote.items || []).filter((i) => !i.deleted).length;
   const localN = state.trips.reduce((n, t) => n + t.items.length, 0);
   let replace = opts.replace ?? null;
   if (replace === null && remoteLive && localN) {
-    replace = window.confirm(`방 ${code} 에 ${remoteLive}건이 있음. 이 폰의 ${localN}건을 버리고 방 내용으로 맞출까?\n(취소 = 둘 다 합침. 같은 내역이 두 번 들어갈 수 있음)`);
+    replace = window.confirm(`방 ${fmtRoomCode(code)} 에 ${remoteLive}건이 있음. 이 폰의 ${localN}건을 버리고 방 내용으로 맞출까?\n(취소 = 둘 다 합침. 같은 내역이 두 번 들어갈 수 있음)`);
   }
   if (replace) {
     for (const t of state.trips) t.items = [];
@@ -276,7 +291,7 @@ async function joinRoom(raw, opts = {}) {
   saveState(state);
   state.ui.tab = 'settle';
   render();
-  toast(`방 ${code} 연결됨`);
+  toast(`방 ${fmtRoomCode(code)} 연결됨`);
   if (!replace) scheduleSync();
   return true;
 }
@@ -659,7 +674,7 @@ async function importFromText(text) {
   // 방 코드가 든 링크: 항목을 복사하지 않고 그 방에 연결(둘이 같은 내용을 계속 같이 봄)
   if (p.room && normalizeCode(p.room)) {
     if (state.sync.code === normalizeCode(p.room)) { toast('이미 이 방에 연결돼 있음'); return false; }
-    if (!window.confirm(`방 ${normalizeCode(p.room)} 에 연결해서 같이 쓸까? 이 폰의 내역은 방 내용으로 맞춰짐.`)) return false;
+    if (!window.confirm(`방 ${fmtRoomCode(normalizeCode(p.room))} 에 연결해서 같이 쓸까? 이 폰의 내역은 방 내용으로 맞춰짐.`)) return false;
     return joinRoom(p.room, { replace: true });
   }
   const tripName = p.trip?.name || '여행';
@@ -1311,13 +1326,13 @@ function renderSettings() {
     <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "9.2 MAD = USD 1달러", 멕시코 "1 MXN = 한화 72원".</p></section>
   <section class="card"><h2>같이 쓰기 (두 폰 동기화)</h2>
     ${state.sync.code ? `
-    <div class="line" style="display:flex;justify-content:space-between;align-items:center"><span>방 코드</span><span><b style="font-size:1.3rem;letter-spacing:.12em">${esc(state.sync.code)}</b></span></div>
+    <div class="line" style="display:flex;justify-content:space-between;align-items:center"><span>방 코드</span><span><b style="font-size:1.3rem;letter-spacing:.12em">${esc(fmtRoomCode(state.sync.code))}</b></span></div>
     <div class="muted" style="margin:4px 0">${state.sync.lastAt ? `마지막 동기화 ${esc(shortTime(new Date(state.sync.lastAt).toISOString()))}` : '아직 동기화 안 됨'}${dirtyCount() ? ` · 올릴 것 ${dirtyCount()}건` : ''}${syncError ? ` · <span class="warn">${esc(syncError)}</span>` : ' · <span class="ok">정상</span>'}</div>
     <div class="actions"><button class="btn primary" data-action="sync-now">지금 동기화</button><button class="btn" data-action="sync-copy">코드 복사</button><button class="btn sm danger" data-action="sync-leave">나가기</button></div>
     <p class="hint">저장할 때마다 몇 초 안에 올라가고, 앱을 열거나 화면에 돌아올 때·1분마다 받아옴. 인터넷이 없으면 폰에 두었다가 잡히면 올림. 정산 탭 "공유 링크"에도 이 코드가 들어가서 상대 폰은 링크만 넣으면 됨.</p>` : `
     <p class="hint" style="margin:0 0 6px">한쪽 폰에서 방을 만들고, 다른 폰은 그 코드를 넣으면 내역·지갑·환율이 자동으로 같아짐. 무료(Supabase).</p>
     <div class="actions"><button class="btn primary" data-action="sync-create">방 만들기 (이 폰 내용으로)</button></div>
-    <div class="row" style="margin-top:8px"><input id="sync-code" placeholder="방 코드 6자" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase"><button class="btn sm" data-action="sync-join">연결</button></div>`}
+    <div class="row" style="margin-top:8px"><input id="sync-code" placeholder="방 코드 8자 (예: ABCD-EFGH)" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase"><button class="btn sm" data-action="sync-join">연결</button></div>`}
   </section>
   <section class="card"><h2>공유 링크로 가져오기</h2>
     <p class="hint" style="margin:0 0 6px">다른 폰에서 만든 "공유 링크"를 여기 붙여 넣으면 정산 항목·현금 지갑·환율이 들어옴. 아이폰 홈 화면 앱은 링크를 눌러도 앱으로 안 열리니 이 칸을 쓸 것.</p>
@@ -1574,11 +1589,11 @@ async function onClick(el) {
     }
     case 'sync-now': { const ok = await syncNow(); toast(ok ? '동기화 완료' : `동기화 실패${syncError ? `: ${syncError}` : ''}`); render(); break; }
     case 'sync-copy': {
-      try { toast((await copyText(state.sync.code)) ? `코드 ${state.sync.code} 복사함` : '복사 실패'); } catch (e) { toast(`복사 실패: ${e.message}`); }
+      try { toast((await copyText(fmtRoomCode(state.sync.code))) ? `코드 ${fmtRoomCode(state.sync.code)} 복사함` : '복사 실패'); } catch (e) { toast(`복사 실패: ${e.message}`); }
       break;
     }
     case 'sync-leave': {
-      if (!window.confirm(`방 ${state.sync.code} 에서 나갈까? 이 폰의 내역은 그대로 남고, 이후 변경은 서로 안 넘어감.`)) return;
+      if (!window.confirm(`방 ${fmtRoomCode(state.sync.code)} 에서 나갈까? 이 폰의 내역은 그대로 남고, 이후 변경은 서로 안 넘어감.`)) return;
       state.sync = { code: '', lastAt: 0, metaRev: state.sync.metaRev }; state.tombstones = [];
       for (const t of state.trips) for (const it of t.items) delete it.dirty;
       saveState(state); render(); break;

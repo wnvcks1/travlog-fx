@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { metaOf, buildPush, applyRemote, newRoomCode, normalizeCode } from '../sync.js';
+import { metaOf, buildPush, applyRemote, newRoomCode, normalizeCode, fmtRoomCode, syncErrorText, callSync } from '../sync.js';
 import { defaultState } from '../store.js';
 
 const mk = () => {
@@ -14,10 +14,27 @@ const mk = () => {
   return s;
 };
 
-test('방 코드: 6자 대문자, 정리 함수', () => {
-  assert.match(newRoomCode(), /^[A-Z2-9]{6}$/);
-  assert.equal(normalizeCode(' ab-cd ef '), 'ABCDEF');
+test('방 코드: 8자(0·O·1·I 없음), 하이픈 표시, 정리 함수', () => {
+  for (let i = 0; i < 200; i += 1) assert.match(newRoomCode(), /^[A-HJ-NP-Z2-9]{8}$/);
+  assert.equal(new Set(Array.from({ length: 50 }, () => newRoomCode())).size, 50);
+  assert.equal(newRoomCode(() => 0), 'AAAAAAAA');
+  assert.equal(newRoomCode(() => 0.999), '99999999');
+  assert.equal(fmtRoomCode('ABCDEFGH'), 'ABCD-EFGH');
+  assert.equal(fmtRoomCode('9GNU99'), '9GNU99');
+  assert.equal(normalizeCode(' abcd-efgh '), 'ABCDEFGH');
+  assert.equal(normalizeCode(' ab-cd ef '), 'ABCDEF'); // 옛 6자도 받음(서버가 새 방으로 이어 줌)
   assert.equal(normalizeCode('abc'), '');
+});
+
+test('서버 거절 응답 → 사람 말, callSync 는 throw', async () => {
+  assert.equal(syncErrorText({ error: 'no_room', left: 3 }), '그 코드의 방이 없음 (남은 시도 3번)');
+  assert.equal(syncErrorText({ error: 'locked', retry_min: 42 }), '틀린 코드를 5번 넣어서 잠김. 42분 뒤 다시');
+  assert.match(syncErrorText({ error: 'exists', left: 4 }), /이미 있는 코드/);
+  const fake = (body) => async () => ({ ok: true, status: 200, text: async () => JSON.stringify(body) });
+  await assert.rejects(callSync({ code: 'ABCDEFGH' }, { fetchFn: fake({ error: 'locked', retry_min: 60 }) }), /60분 뒤/);
+  await assert.rejects(callSync({ code: 'ABCDEFGH' }, { fetchFn: fake({ error: 'no_room', left: 0 }) }), /남은 시도 0번/);
+  const ok = await callSync({ code: '9GNU99' }, { fetchFn: fake({ code: 'ABCDEFGH', meta: {}, meta_rev: 1, items: [] }) });
+  assert.equal(ok.code, 'ABCDEFGH');
 });
 
 test('buildPush: dirty 항목과 삭제 기록만, all 이면 전부. rev 없는 항목은 now 로', () => {

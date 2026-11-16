@@ -13,15 +13,38 @@ export const SUPABASE_KEY = 'sb_publishable_ZVXS8yXokuAL-x6UstHIFw_x1XC5oJn';
 const CODE_RE = /^[A-Z0-9]{6,12}$/;
 
 /**
- * 방 코드 6자(헷갈리는 0·O·1·I 제외).
- * @param {() => number} [rnd]
+ * 방 코드 영문·숫자 8자(헷갈리는 0·O·1·I 제외, 32종 → 약 1조 가지). 2026-11-16 6자 → 8자.
+ * 기본은 crypto 난수. 32 는 256 의 약수라 byte % 32 가 고르게 나옴.
+ * @param {() => number} [rnd] 테스트용 0~1 난수
  * @returns {string}
  */
-export function newRoomCode(rnd = Math.random) {
+export function newRoomCode(rnd) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let s = '';
-  for (let i = 0; i < 6; i += 1) s += chars[Math.floor(rnd() * chars.length) % chars.length];
-  return s;
+  const bytes = new Uint8Array(8);
+  if (rnd) for (let i = 0; i < 8; i += 1) bytes[i] = Math.floor(rnd() * 256) & 255;
+  else globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => chars[b % 32]).join('');
+}
+
+/**
+ * 화면용 방 코드: 8자는 4자씩 끊어 보여 줌(ABCD-EFGH). 입력은 하이픈을 지우고 받음.
+ * @param {string} code
+ * @returns {string}
+ */
+export function fmtRoomCode(code) {
+  return /^[A-Z0-9]{8}$/.test(code) ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+}
+
+/**
+ * 서버가 거절 대신 돌려주는 {error} 를 사람 말로. 틀린 시도는 서버가 IP 별로 세서 1시간에 5번이면 잠금.
+ * @param {{error:string, left?:number, retry_min?:number}} j
+ * @returns {string}
+ */
+export function syncErrorText(j) {
+  if (j.error === 'locked') return `틀린 코드를 5번 넣어서 잠김. ${j.retry_min ?? 60}분 뒤 다시`;
+  if (j.error === 'no_room') return `그 코드의 방이 없음${Number.isFinite(j.left) ? ` (남은 시도 ${j.left}번)` : ''}`;
+  if (j.error === 'exists') return '이미 있는 코드라 못 만듦. 다시 눌러 줘';
+  return `동기화 실패: ${j.error}`;
 }
 
 /**
@@ -164,7 +187,9 @@ export async function callSync(req, opts = {}) {
       try { msg = JSON.parse(text).message || text; } catch { /* 그대로 */ }
       throw new Error(/no room/.test(msg) ? '그 코드의 방이 없음' : `동기화 실패 ${res.status}: ${msg.slice(0, 120)}`);
     }
-    return JSON.parse(text);
+    const j = JSON.parse(text);
+    if (j && typeof j.error === 'string') throw new Error(syncErrorText(j));
+    return j;
   } finally {
     clearTimeout(timer);
   }
