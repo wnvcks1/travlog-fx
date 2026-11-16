@@ -4,7 +4,8 @@
  */
 import { CURRENCIES, currencyInfo, findCurrency, searchCurrencies, countryOf } from './currencies.js';
 import { loadHistory, hasHistory, sliceYears, summarize, chartModel, ECB_CODES, PEGS } from './history.js';
-import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay, evalTerms } from './calc.js';
+import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay, evalTerms, itemKrw } from './calc.js';
+import { CATEGORIES, CAT_BY_ID, categoryOf, categoryTotals, guessCategory } from './category.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
 import { parseLedger, decodeImport, encodeImport } from './importer.js';
@@ -114,6 +115,9 @@ const sheetEl = /** @type {HTMLElement} */ (document.getElementById('sheet'));
  * @type {null | {type:'cur', q:string} | {type:'chart', code:string, years:number, status:'loading'|'ok'|'none'|'error', points:Array<[string, number]>|null, fromCache:boolean, peg:[string, number]|null, error:string, idx:number}}
  */
 let sheet = null;
+// 정산 탭 분류별 카드: 펼침 여부, 내역을 한 분류만 볼 때 그 id
+let catsOpen = false;
+let catFilter = '';
 
 /**
  * 트래블로그 앱 값이 아직 유효한지. 입력한 날보다 새 고시일이 나오면 만료(그날 환율은 새 고시를 따름).
@@ -761,7 +765,8 @@ function renderSettle() {
     <div class="row"><label>몫</label><div class="payer" style="flex:1">${[['', '같이'], ...state.people.map((p) => [p, `${p} 개인`])].map(([v, l]) => `<button class="${(draft.forWho || '') === v ? 'on' : ''}" data-action="draft-for" data-for="${esc(v)}">${esc(l)}</button>`).join('')}</div></div>
     <div class="row"><label>결제</label><div class="payer" style="flex:1">${[['cash', '현금'], ['card', '카드']].map(([v, l]) => `<button class="${shownPay === v ? 'on' : ''}" data-action="draft-pay" data-pay="${v}">${l}</button>`).join('')}</div></div>
     <div class="row"><label>날짜</label><input id="d-date" type="date" data-action="draft-date" value="${esc(draft.date || localDay(Date.now()))}" max="${esc(localDay(Date.now() + 86400e3))}"></div>
-    <div class="row"><label>내용</label><input id="d-desc" data-action="draft-desc" value="${esc(draft.desc)}" placeholder="타진 + 민트티" autocomplete="off"></div>
+    <div class="row"><label>내용</label><input id="d-desc" data-action="draft-desc" value="${esc(draft.desc)}" placeholder="타진 + 민트티" autocomplete="off">
+      <select id="d-cat" data-action="draft-cat" style="flex:0 0 36%" aria-label="분류">${catOptions(draft.cat || '', draft.desc)}</select></div>
     <div class="row"><label>금액</label><input id="d-amount" data-action="draft-amount" value="${esc(draft.amount)}" inputmode="decimal" placeholder="0" autocomplete="off">
       <select data-action="draft-code" style="flex:0 0 46%">${currencyOptions(draft.code)}</select></div>
     <div class="actions">
@@ -782,7 +787,7 @@ function renderSettle() {
     const pi = state.people.indexOf(it.payer);
     return `<div class="item ${pi >= 0 ? `p${pi % 4}` : ''}" data-action="item-edit" data-id="${esc(it.id)}">
       <span class="who">${esc(it.payer)}</span>
-      <div class="mid"><div class="desc">${esc(it.desc || '(내용 없음)')}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>
+      <div class="mid"><div class="desc">${CAT_BY_ID[categoryOf(it)].icon} ${esc(it.desc || '(내용 없음)')}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>
       <div class="amt"><b>${main}</b><small>${conv}</small></div>
     </div>`;
   };
@@ -791,7 +796,10 @@ function renderSettle() {
   try { tripRate = trip.code === 'KRW' ? 1 : krwPerUnit(trip.code, ctx()).rate; } catch (e) { if (!(e instanceof RateMissingError)) throw e; }
   const today = localDay(Date.now());
   const wd = ['일', '월', '화', '수', '목', '금', '토'];
-  const rows = groupByDay(items, trip.code, tripRate).map((g) => {
+  // 분류 카드에서 한 분류를 누르면 그 분류만(하루 합계도 그 분류만)
+  if (catFilter && !items.some((it) => categoryOf(it) === catFilter)) catFilter = '';
+  const shown = catFilter ? items.filter((it) => categoryOf(it) === catFilter) : items;
+  const rows = groupByDay(shown, trip.code, tripRate).map((g) => {
     let label = '날짜 없음';
     if (g.day) {
       const [y, m, dd] = g.day.split('-').map(Number);
@@ -803,7 +811,8 @@ function renderSettle() {
   const groups = duplicateGroups(trip.items, state.dupOk);
   const dupeBtn = groups.length ? `<div class="actions"><button class="btn sm danger" data-action="items-dedupe">같은 항목 ${groups.length}묶음 확인</button></div>` : '';
   const clearBtn = items.length ? `<div class="actions"><button class="btn sm" data-action="items-clear">내역 전체 삭제</button></div>` : '';
-  const list = `<section class="card"><h2>내역 ${items.length}건</h2>${dupeBtn}<div class="items">${rows || '<div class="empty">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div>${clearBtn}</section>`;
+  const filterTag = catFilter ? ` <button class="mini" data-action="cat-filter" data-cat="">${CAT_BY_ID[catFilter].icon} ${esc(CAT_BY_ID[catFilter].name)}만 ✕</button>` : '';
+  const list = `<section class="card"><h2>내역 ${catFilter ? `${shown.length}/` : ''}${items.length}건${filterTag}</h2>${dupeBtn}<div class="items">${rows || '<div class="empty">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div>${clearBtn}</section>`;
 
   let summary;
   try {
@@ -823,7 +832,54 @@ function renderSettle() {
   } catch (e) {
     summary = `<div class="summary"><div class="err">정산 계산 실패: ${esc(e.message)}</div></div>`;
   }
-  return form + summary + renderCash(trip) + list + renderDedupe(trip);
+  return form + summary + renderCats(trip) + renderCash(trip) + list + renderDedupe(trip);
+}
+
+/**
+ * 분류 select 의 '자동' 칸 글자. 지금 내용으로 추측한 분류를 같이 보여 줌.
+ * @param {string} desc
+ * @returns {string} 예: "자동 · 🍽️ 식사"
+ */
+function autoCatLabel(desc) {
+  const c = CAT_BY_ID[guessCategory(desc)];
+  return desc && desc.trim() ? `자동 · ${c.icon} ${c.name}` : '분류 자동';
+}
+
+/**
+ * 정산 입력칸의 분류 select 옵션. 빈 값 = 자동(내용으로 추측).
+ * @param {string} selected
+ * @param {string} desc
+ * @returns {string}
+ */
+function catOptions(selected, desc) {
+  return `<option value="">${esc(autoCatLabel(desc))}</option>`
+    + CATEGORIES.map((c) => `<option value="${c.id}" ${c.id === selected ? 'selected' : ''}>${c.icon} ${esc(c.name)}</option>`).join('');
+}
+
+/**
+ * 분류별 지출 카드. 접힌 상태에선 상위 3개만 한 줄, 펼치면 막대. 줄을 누르면 내역을 그 분류만.
+ * 막대 하나의 길이 = 그 분류 원화 / 전체 원화(한 색, 값은 글자로 다 적어서 따로 범례 없음).
+ * @param {object} trip
+ * @returns {string}
+ */
+function renderCats(trip) {
+  if (!trip.items.length) return '';
+  let cats;
+  try { cats = categoryTotals(trip.items, (it) => itemKrw(it, ctx())); } catch (e) {
+    if (e instanceof RateMissingError) return '';
+    throw e;
+  }
+  const top = cats.slice(0, 3).map((c) => `${c.icon} ${esc(c.name)} ${Math.round(c.pct)}%`).join(' · ');
+  const head = `<button class="cats-head" data-action="cats-toggle" aria-expanded="${catsOpen}"><b>분류별 지출</b><span>${catsOpen ? '접기 ▲' : `${top} ▼`}</span></button>`;
+  if (!catsOpen) return `<section class="card cats">${head}</section>`;
+  const max = cats[0]?.krw || 1;
+  const rows = cats.map((c) => `<button class="cat-row${catFilter === c.id ? ' on' : ''}" data-action="cat-filter" data-cat="${c.id}">
+      <span class="nm">${c.icon} ${esc(c.name)} <small>${c.n}건</small></span>
+      <span class="v">${fmt(c.krw)}원 <small>${Math.round(c.pct)}%</small></span>
+      <span class="bar"><i style="width:${Math.max(2, (c.krw / max) * 100).toFixed(1)}%"></i></span>
+    </button>`).join('');
+  return `<section class="card cats">${head}<div class="cat-list">${rows}</div>
+    <p class="hint">자동 분류(내용 낱말 기준). 틀린 건 내역을 눌러 분류를 고르면 그걸로 고정. 줄을 누르면 아래 내역이 그 분류만 보임.</p></section>`;
 }
 
 /**
@@ -914,6 +970,8 @@ function summaryText() {
   const out = [`[${trip.name} 정산] ${new Date().toISOString().slice(0, 10)} 기준, ${trip.items.length}건`];
   for (const p of state.people) out.push(`${p} 낸 돈 ${fmt(s.paid[p])}원${cadTxt(s.paid[p])}`);
   out.push(`합계 ${fmt(s.total)}원${cadTxt(s.total)} · 분담 ${state.people.map((p) => `${p} ${fmt(s.share[p])}원`).join(', ')}`);
+  const cats = categoryTotals(trip.items, (i) => itemKrw(i, ctx()));
+  if (cats.length) out.push(`분류: ${cats.map((c) => `${c.name} ${fmt(c.krw)}원(${Math.round(c.pct)}%)`).join(' · ')}`);
   for (const t of s.transfers) out.push(`→ ${t.from}이(가) ${t.to}에게 ${fmt(t.krw)}원${t.cad === null ? '' : ` (C$${fmt(t.cad, 1)})`}`);
   if (!s.transfers.length) out.push('→ 주고받을 돈 없음');
   const codes = [...new Set(trip.items.map((i) => i.code).filter((c) => c !== 'KRW'))];
@@ -960,6 +1018,7 @@ function saveDraft() {
     Object.assign(it, { payer: draft.payer, desc: draft.desc.trim(), amount, code: draft.code });
     if (draft.forWho) it.forWho = draft.forWho; else delete it.forWho;
     if (draft.pay) it.pay = draft.pay; else delete it.pay;
+    if (draft.cat) it.cat = draft.cat; else delete it.cat;
     if (changed) Object.assign(it, { krw: Math.round(amount * r.rate), rate: r.rate, source: r.source });
     // 날짜만 바꾸고 시각은 유지(원화 환산은 저장 때 환율 그대로)
     if (draft.date && (!Number.isFinite(it.ts) || draft.date !== localDay(it.ts))) it.ts = withDay(Number.isFinite(it.ts) ? it.ts : Date.now(), draft.date);
@@ -971,7 +1030,7 @@ function saveDraft() {
       id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       ts: draft.date && draft.date !== localDay(Date.now()) ? withDay(Date.now(), draft.date) : Date.now(), payer: draft.payer, desc: draft.desc.trim(), amount, code: draft.code,
       krw: Math.round(amount * r.rate), rate: r.rate, source: r.source, rev: Date.now(), dirty: true,
-      ...(draft.forWho ? { forWho: draft.forWho } : {}), pay: draft.pay || defaultEntryPay(trip),
+      ...(draft.forWho ? { forWho: draft.forWho } : {}), pay: draft.pay || defaultEntryPay(trip), ...(draft.cat ? { cat: draft.cat } : {}),
     });
     toast(`추가함 · ${fmt(amount * r.rate)}원`);
   }
@@ -1488,12 +1547,14 @@ async function onClick(el) {
       toast(`${added}건 추가${failed.length ? ` · ${failed.length}건 실패` : ''}`); break;
     }
     case 'draft-save': saveDraft(); break;
+    case 'cats-toggle': catsOpen = !catsOpen; render(); break;
+    case 'cat-filter': catFilter = catFilter === d.cat ? '' : (d.cat || ''); render(); break;
     case 'draft-cancel': editingId = null; draft = { payer: draft.payer, desc: '', amount: '', code: draft.code, forWho: '', pay: '', date: '' }; render(); break;
     case 'item-edit': {
       const it = activeTrip().items.find((x) => x.id === d.id);
       if (!it) return;
       editingId = it.id;
-      draft = { payer: it.payer, desc: it.desc, amount: String(it.amount), code: it.code, forWho: it.forWho || '', pay: it.pay || '', date: Number.isFinite(it.ts) ? localDay(it.ts) : '' };
+      draft = { payer: it.payer, desc: it.desc, amount: String(it.amount), code: it.code, forWho: it.forWho || '', pay: it.pay || '', date: Number.isFinite(it.ts) ? localDay(it.ts) : '', cat: it.cat || '' };
       render();
       window.scrollTo({ top: 0, behavior: 'smooth' });
       break;
@@ -1729,10 +1790,17 @@ function onInput(el) {
   const a = el.dataset.action;
   const d = el.dataset;
   switch (a) {
-    case 'draft-desc': draft.desc = el.value; break;
+    case 'draft-desc': {
+      draft.desc = el.value;
+      // 다시 그리지 않고(키보드 유지) '자동' 칸 글자만 바꿈
+      const auto = document.querySelector('#d-cat option[value=""]');
+      if (auto) auto.textContent = autoCatLabel(draft.desc);
+      break;
+    }
     case 'draft-amount': draft.amount = el.value; break;
     case 'draft-code': draft.code = el.value; break;
     case 'draft-date': draft.date = el.value; break;
+    case 'draft-cat': draft.cat = el.value; break;
     case 'trip-select': state.activeTrip = el.value; draft.code = activeTrip().code; editingId = null; fx.code = tripFxCode(); fx.input = ''; fx.terms = []; persist(); render(); break;
     case 'set-person': {
       const i = Number(d.i);
