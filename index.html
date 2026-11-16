@@ -98,6 +98,8 @@ h2{font-size:.95rem;margin:0 0 8px;color:var(--sub);font-weight:600;}
 .payer{display:flex;gap:6px;}
 .payer button{flex:1;min-height:44px;border-radius:10px;background:var(--chip);font-weight:600;}
 .payer button.on{background:var(--accent);color:var(--accent-text);}
+/* 정산 입력칸의 낸 사람·몫·결제: 낮게(Chan 2026-11-16) */
+.payer.sm button{min-height:36px;padding:4px 4px;font-size:.88rem;white-space:nowrap;}
 .items{margin-top:6px;}
 .item{display:flex;gap:10px;align-items:center;padding:10px 8px;border-top:1px solid var(--border);border-radius:10px;}
 .item:first-child{border-top:0;}
@@ -204,6 +206,7 @@ body.fx .btn{min-height:44px;}
 .sheet-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;}
 .sheet-head h3{margin:0;font-size:1.05rem;}
 .cats-head{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;font-size:.95rem;}
+.cats-head b{white-space:nowrap;flex:0 0 auto;}
 .cats-head span{color:var(--sub);font-size:.8rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .cat-list{display:flex;flex-direction:column;gap:2px;margin-top:8px;}
 .cat-row{display:grid;grid-template-columns:1fr auto;gap:2px 8px;width:100%;text-align:left;padding:6px 6px 8px;border-radius:10px;}

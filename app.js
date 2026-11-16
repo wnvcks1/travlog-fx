@@ -761,12 +761,12 @@ function renderSettle() {
   const form = `
   <section class="card">
     <div class="row"><label>여행</label>${tripSel}<button class="btn sm" data-action="trip-new">새 여행</button></div>
-    <div class="row"><label>낸 사람</label><div class="payer" style="flex:1">${payerBtns}</div></div>
-    <div class="row"><label>몫</label><div class="payer" style="flex:1">${[['', '같이'], ...state.people.map((p) => [p, `${p} 개인`])].map(([v, l]) => `<button class="${(draft.forWho || '') === v ? 'on' : ''}" data-action="draft-for" data-for="${esc(v)}">${esc(l)}</button>`).join('')}</div></div>
-    <div class="row"><label>결제</label><div class="payer" style="flex:1">${[['cash', '현금'], ['card', '카드']].map(([v, l]) => `<button class="${shownPay === v ? 'on' : ''}" data-action="draft-pay" data-pay="${v}">${l}</button>`).join('')}</div></div>
+    <div class="row"><label>낸 사람</label><div class="payer sm" style="flex:1">${payerBtns}</div></div>
+    <div class="row"><label>몫</label><div class="payer sm" style="flex:1">${[['', '같이'], ...state.people.map((p) => [p, `${p} 개인`])].map(([v, l]) => `<button class="${(draft.forWho || '') === v ? 'on' : ''}" data-action="draft-for" data-for="${esc(v)}">${esc(l)}</button>`).join('')}</div></div>
+    <div class="row"><label>결제</label><div class="payer sm" style="flex:1">${[['cash', '💵 현금'], ['card', '💳 카드']].map(([v, l]) => `<button class="${shownPay === v ? 'on' : ''}" data-action="draft-pay" data-pay="${v}">${l}</button>`).join('')}</div></div>
     <div class="row"><label>날짜</label><input id="d-date" type="date" data-action="draft-date" value="${esc(draft.date || localDay(Date.now()))}" max="${esc(localDay(Date.now() + 86400e3))}"></div>
-    <div class="row"><label>내용</label><input id="d-desc" data-action="draft-desc" value="${esc(draft.desc)}" placeholder="타진 + 민트티" autocomplete="off">
-      <select id="d-cat" data-action="draft-cat" style="flex:0 0 36%" aria-label="분류">${catOptions(draft.cat || '', draft.desc)}</select></div>
+    <div class="row"><label>내용</label><input id="d-desc" data-action="draft-desc" value="${esc(draft.desc)}" placeholder="타진 + 민트티" autocomplete="off"></div>
+    <div class="row"><label>분류</label><select id="d-cat" data-action="draft-cat" aria-label="분류">${catOptions(draft.cat || '', draft.desc)}</select></div>
     <div class="row"><label>금액</label><input id="d-amount" data-action="draft-amount" value="${esc(draft.amount)}" inputmode="decimal" placeholder="0" autocomplete="off">
       <select data-action="draft-code" style="flex:0 0 46%">${currencyOptions(draft.code)}</select></div>
     <div class="actions">
