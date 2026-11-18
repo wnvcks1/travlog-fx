@@ -8,7 +8,7 @@ import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashB
 import { CATEGORIES, CAT_BY_ID, categoryOf, categoryTotals, guessCategory } from './category.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
-import { parseLedger, decodeImport, encodeImport } from './importer.js';
+import { decodeImport, encodeImport } from './importer.js';
 import { metaOf, buildPush, applyRemote, callSync, newRoomCode, normalizeCode, fmtRoomCode } from './sync.js';
 
 const logger = {
@@ -100,7 +100,6 @@ let editingId = null;
 // date: '' 이면 오늘(저장 시각). 'YYYY-MM-DD' 면 그 날짜로
 let draft = { payer: state.people[0], desc: '', amount: '', code: '', forWho: '', pay: '', date: '' };
 /** @type {{text:string, items:any[], skipped:string[], warnings:string[]}|null} */
-let pasteBox = null;
 /** 중복 확인 창: null 이면 닫힘. keep = 남길 항목 id */
 let dedupe = null;
 
@@ -567,39 +566,6 @@ function cadOf(krw) {
 }
 
 /**
- * 노션 메모 붙여넣기 상자. 파싱 결과를 미리 보여 주고 확인 뒤 추가.
- * @returns {string}
- */
-function renderPasteBox() {
-  if (!pasteBox) return '';
-  const trip = activeTrip();
-  const preview = pasteBox.items.length
-    ? `<div class="items">${pasteBox.items.map((it) => `<div class="item"><span class="who">${esc(it.payer)}</span><div class="mid"><div class="desc">${esc(it.desc)}</div>${it.note ? `<div class="sub">${esc(it.note)}</div>` : ''}</div><div class="amt"><b>${fmt(it.amount, currencyInfo(it.code).dec)} ${esc(it.code)}</b></div></div>`).join('')}</div>`
-    : '';
-  const skipped = pasteBox.skipped.length ? `<p class="hint">항목으로 안 읽힌 줄 ${pasteBox.skipped.length}개: ${esc(pasteBox.skipped.slice(0, 3).join(' / '))}${pasteBox.skipped.length > 3 ? ' …' : ''}</p>` : '';
-  const warns = pasteBox.warnings.length ? `<p class="hint warn">${esc(pasteBox.warnings.join(' / '))}</p>` : '';
-  return `
-  <section class="card"><h2>노션 메모 붙여넣기 → ${esc(trip.name)}</h2>
-    <textarea id="paste-text" rows="6" style="width:100%;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--card);color:var(--text)" placeholder="ㅈ빵 + 망고주스 = 5 + 22 = 27
-ㅅ마트 97.6
-ㅈ사하라 투어 191 달러">${esc(pasteBox.text)}</textarea>
-    <p class="hint">줄 맨 앞 초성(${state.people.map((p, i) => `${esc(state.initials[i] || chosungOf(p))}=${esc(p)}`).join(', ')})이 낸 사람. 단위 없으면 ${esc(trip.code)}. 원·달러·유로 단위는 그대로 읽음.</p>
-    <div class="actions"><button class="btn" data-action="paste-preview">읽어 보기</button><button class="btn primary" data-action="paste-add" ${pasteBox.items.length ? '' : 'disabled'}>${pasteBox.items.length}건 추가</button><button class="btn sm" data-action="paste-close">닫기</button></div>
-    ${preview}${skipped}${warns}
-  </section>`;
-}
-
-/**
- * @param {string} name
- * @returns {string}
- */
-function chosungOf(name) {
-  const code = name.charCodeAt(0) - 0xac00;
-  if (code < 0 || code > 11171) return name[0];
-  return ['ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ'][Math.floor(code / 588)];
-}
-
-/**
  * 항목 여러 개를 현재 환율 스냅샷과 함께 여행에 추가. 환율 없는 통화는 건너뛰고 개수를 돌려줌.
  * @param {object} trip
  * @param {Array<{payer:string, desc:string, amount:number, code:string, forWho?:string, note?:string}>} list
@@ -773,9 +739,7 @@ function renderSettle() {
       ${editingId ? '<button class="btn danger" data-action="item-delete">삭제</button><button class="btn" data-action="draft-cancel">취소</button>' : ''}
       <button class="btn primary" data-action="draft-save">${editingId ? '저장' : '추가'}</button>
     </div>
-    ${editingId ? '' : '<div class="actions"><button class="btn sm" data-action="paste-open">노션 메모 붙여넣기</button></div>'}
-  </section>
-  ${renderPasteBox()}`;
+  </section>`;
 
   const itemRow = (it) => {
     const payTag = payMethod(it, trip) === 'card' ? '<b>💳 카드</b>' : '';
@@ -810,9 +774,8 @@ function renderSettle() {
   }).join('');
   const groups = duplicateGroups(trip.items, state.dupOk);
   const dupeBtn = groups.length ? `<div class="actions"><button class="btn sm danger" data-action="items-dedupe">같은 항목 ${groups.length}묶음 확인</button></div>` : '';
-  const clearBtn = items.length ? `<div class="actions"><button class="btn sm" data-action="items-clear">내역 전체 삭제</button></div>` : '';
   const filterTag = catFilter ? ` <button class="mini" data-action="cat-filter" data-cat="">${CAT_BY_ID[catFilter].icon} ${esc(CAT_BY_ID[catFilter].name)}만 ✕</button>` : '';
-  const list = `<section class="card"><h2>내역 ${catFilter ? `${shown.length}/` : ''}${items.length}건${filterTag}</h2>${dupeBtn}<div class="items">${rows || '<div class="empty">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div>${clearBtn}</section>`;
+  const list = `<section class="card"><h2>내역 ${catFilter ? `${shown.length}/` : ''}${items.length}건${filterTag}</h2>${dupeBtn}<div class="items">${rows || '<div class=\"empty\">아직 없음. 위에서 추가하거나 환율 탭에서 "정산에 추가".</div>'}</div></section>`;
 
   let summary;
   try {
@@ -876,8 +839,7 @@ function renderCats(trip) {
       <span class="v">${fmt(c.krw)}원 <small>${Math.round(c.pct)}%</small></span>
       <span class="bar"><i style="width:${Math.max(2, (c.krw / max) * 100).toFixed(1)}%"></i></span>
     </button>`).join('');
-  return `<section class="card cats">${head}<div class="cat-list">${rows}</div>
-    <p class="hint">자동 분류(내용 낱말 기준). 틀린 건 내역을 눌러 분류를 고르면 그걸로 고정. 줄을 누르면 아래 내역이 그 분류만 보임.</p></section>`;
+  return `<section class="card cats">${head}<div class="cat-list">${rows}</div></section>`;
 }
 
 /**
@@ -920,7 +882,6 @@ function renderDedupe(trip) {
   }).join('') || '<div class="empty">같은 항목 없음</div>';
   return `<div class="sheet-bg" data-action="dup-cancel"><section class="sheet" role="dialog" aria-label="같은 항목 확인" data-action="dup-noop">
     <h2>같은 항목 ${groups.length}묶음</h2>
-    <p class="hint" style="margin:0 0 8px">낸 사람·내용·금액·통화가 같은 항목. 줄을 눌러 남길지 지울지 고름. 같은 날 10분 안에 또 들어온 건 지움으로, 다른 날·한참 뒤에 적은 건 따로 산 것일 수 있어 남김으로 미리 골라 둠.</p>
     <div class="sheet-body">${body}</div>
     <div class="actions"><button class="btn" data-action="dup-cancel">취소</button><button class="btn primary" data-action="dup-apply">${gone ? `${gone}건 지우기` : '모두 남기기'}</button></div>
   </section></div>`;
@@ -956,14 +917,13 @@ function renderCash(trip) {
     // 둘째 줄은 식 그대로: 넣은 돈 − 현금 사용 = 남은 돈
     return `<div class="line"><span>${esc(w.person)} ${esc(w.code)} 남은 현금</span><span class="${cls}"><b>${cf(w.remaining)} ${esc(w.code)}</b> <small class="muted">${esc(krwOf(w.remaining, w.code))}</small></span></div>
       <div class="line formula"><span class="muted">넣은 돈 ${cf(w.topup)} − 현금 사용 ${cf(w.spent)} = <b class="${cls}">남은 ${cf(w.remaining)} ${esc(w.code)}</b></span></div>`;
-  }).join('') || '<div class="empty">아직 없음. 환전한 현금을 아래에 넣으면 정산 내역 중 현금 결제분이 빠져나간 잔액이 보임.</div>';
+  }).join('') || '<div class="empty">아직 없음</div>';
   const list = cash.map((c) => `<div class="kv"><span>${esc(c.person)} · ${cf(c.amount)} ${esc(c.code)}${c.note ? ` · ${esc(c.note)}` : ''}</span><button class="del" data-action="cash-del" data-id="${esc(c.id)}">삭제</button></div>`).join('');
   const personSel = `<select id="c-person" style="flex:0 0 30%">${state.people.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>`;
   return `<section class="card cash"><h2>현금 지갑</h2>${rows}
     <div class="hint" style="margin:6px 0">${list ? '넣은 돈:' : ''}</div>${list}
     <div class="row" style="margin-top:8px">${personSel}<input id="c-amount" inputmode="decimal" placeholder="환전 금액" autocomplete="off"><select id="c-code" style="flex:0 0 34%">${currencyOptions(trip.code)}</select></div>
-    <div class="actions"><button class="btn primary" data-action="cash-add">현금 넣기</button></div>
-    <p class="hint">새로 적는 항목은 현금이 기본. 카드로 낸 것만 입력할 때 "카드"를 누르면 됨. 내역의 💳 표시가 카드로 잡힌 항목.</p></section>`;
+    <div class="actions"><button class="btn primary" data-action="cash-add">현금 넣기</button></div></section>`;
 }
 
 
@@ -1378,7 +1338,7 @@ function renderSettings() {
   const log = rateLog.length ? `<ul class="list-plain">${rateLog.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : '';
 
   return `
-  <section class="card"><h2>여행</h2>${trips}<p class="hint">새로 적는 항목은 모든 여행에서 현금이 기본. 카드로 주로 쓰는 여행만 "결제 기본: 카드"로 바꾸면 됨.</p><div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
+  <section class="card"><h2>여행</h2>${trips}<div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
   <section class="card"><h2>즐겨찾기 통화</h2><div class="chips" style="flex-wrap:wrap;overflow:visible">${favChips}</div></section>
   <section class="card"><h2>트래블로그 앱 환율 맞추기</h2>
     <p class="hint" style="margin:0 0 6px">하나머니 화면의 "USD 1 = 1,359원" 값을 그대로 넣으면 앱 전체(정산 내역 포함)가 그 환율로 계산됨. 더 새 고시가 나오면 자동으로 해제.</p>
@@ -1425,6 +1385,7 @@ function renderSettings() {
   <section class="card"><h2>데이터</h2>
     <div class="actions"><button class="btn" data-action="export">내보내기(JSON)</button><button class="btn" data-action="import">가져오기</button></div>
     <input id="import-file" type="file" accept="application/json" style="display:none" data-action="import-file">
+    <div class="actions"><button class="btn danger" data-action="items-clear">${esc(activeTrip().name)} 내역 전체 삭제</button></div>
     <div class="actions"><button class="btn danger" data-action="reset">전체 초기화</button><button class="btn" data-action="app-update">앱 업데이트</button></div>
     <p class="hint">빌드 ${esc(BUILD.startsWith('__') ? 'dev' : BUILD)} · 데이터는 이 폰 브라우저 안에만 저장됨. 폰을 바꾸면 내보내기로 옮길 것.</p></section>`;
 }
@@ -1541,20 +1502,6 @@ async function onClick(el) {
     case 'draft-payer': draft.payer = d.payer; render(); break;
     case 'draft-for': draft.forWho = d.for || ''; render(); break;
     case 'draft-pay': draft.pay = d.pay; render(); break;
-    case 'paste-open': pasteBox = { text: '', items: [], skipped: [], warnings: [] }; render(); document.getElementById('paste-text')?.focus(); break;
-    case 'paste-close': pasteBox = null; render(); break;
-    case 'paste-preview': {
-      const text = /** @type {HTMLTextAreaElement} */ (document.getElementById('paste-text')).value;
-      const r = parseLedger(text, state.people, activeTrip().code, state.initials);
-      pasteBox = { text, ...r };
-      render(); break;
-    }
-    case 'paste-add': {
-      if (!pasteBox || !pasteBox.items.length) return;
-      const { added, failed } = addItems(activeTrip(), pasteBox.items);
-      pasteBox = null; persist(); render();
-      toast(`${added}건 추가${failed.length ? ` · ${failed.length}건 실패` : ''}`); break;
-    }
     case 'draft-save': saveDraft(); break;
     case 'cats-toggle': catsOpen = !catsOpen; render(); break;
     case 'cat-filter': catFilter = catFilter === d.cat ? '' : (d.cat || ''); render(); break;
