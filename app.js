@@ -1047,7 +1047,7 @@ function travlogStatus() {
  * @returns {string}
  */
 function curResults(q) {
-  if (!q.trim()) return '<p class="hint">나라 이름(멕시코), 통화 이름(페소), 도시(방콕), 영문 코드(THB) 아무거나.</p>';
+  if (!q.trim()) return '';
   const list = searchCurrencies(q, 15).filter((c) => c.code !== 'KRW');
   if (!list.length) return '<p class="hint">못 찾음. 다른 이름이나 영문 3자 코드로 찾아 볼 것.</p>';
   return list.map((c) => `<div class="cur-row"><span class="code">${esc(c.code)}</span><span class="nm">${esc(countryOf(c.code)?.flag || '')} ${esc(c.name)}${state.favorites.includes(c.code) ? ' · <small>버튼 있음</small>' : ''}</span>
@@ -1147,8 +1147,7 @@ function renderSheet() {
       <input id="cur-q" data-action="cur-q" value="${esc(sheet.q)}" placeholder="나라·통화·도시 (예: 멕시코, 페소, 방콕)" autocomplete="off" enterkeyhint="search">
       <div id="cur-results">${curResults(sheet.q)}</div>
       <h2 style="margin-top:14px">환율 탭 버튼</h2>
-      <div id="cur-mine">${curMine()}</div>
-      <p class="hint">✕ 빼기로 버튼에서 뺌. 지금 여행 통화(${esc(activeTrip().code)})는 빼도 맨 앞에 늘 보임.</p></div>`;
+      <div id="cur-mine">${curMine()}</div></div>`;
     return;
   }
   sheetEl.innerHTML = chartSheetHtml();
