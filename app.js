@@ -4,7 +4,7 @@
  */
 import { CURRENCIES, currencyInfo, findCurrency, searchCurrencies, countryOf } from './currencies.js';
 import { loadHistory, hasHistory, sliceYears, summarize, chartModel, ECB_CODES, PEGS } from './history.js';
-import { krwPerUnit, settle, fmt, refundLoss, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay, evalTerms, itemKrw } from './calc.js';
+import { krwPerUnit, settle, fmt, RateMissingError, payMethod, cashBalances, groupByDay, localDay, withDay, duplicateGroups, defaultEntryPay, evalTerms, itemKrw } from './calc.js';
 import { CATEGORIES, CAT_BY_ID, categoryOf, categoryTotals, guessCategory } from './category.js';
 import { loadState, saveState, exportJson, importJson, defaultState } from './store.js';
 import { loadRates, hoursOld, sourceLabel } from './rates.js';
@@ -94,7 +94,6 @@ const OP_SYM = { '+': '+', '-': '−', '*': '×', '/': '÷' };
 /** @returns {number} 키패드 식의 값(곱하기·나누기 먼저). 0 으로 나누면 NaN */
 function fxTotal() { return evalTerms(fx.terms, fx.input ? parseAmount(fx.input) : null); }
 /** @type {any} */
-let installEvt = null;
 /** @type {string|null} */
 let editingId = null;
 // date: '' 이면 오늘(저장 시각). 'YYYY-MM-DD' 면 그 날짜로
@@ -118,18 +117,6 @@ let sheet = null;
 let catsOpen = false;
 let catFilter = '';
 
-/**
- * 트래블로그 앱 값이 아직 유효한지. 입력한 날보다 새 고시일이 나오면 만료(그날 환율은 새 고시를 따름).
- * @returns {boolean}
- */
-function travlogActive() {
-  const t = state.travlog;
-  if (!t || !t.at || !Object.keys(t.rates || {}).length) return false;
-  const newer = rates?.baseDate && rates.baseDate > t.at;
-  const tooOld = Date.now() - Date.parse(t.at) > 7 * 86400e3;
-  return !newer && !tooOld;
-}
-
 /** @returns {string} YYYY-MM-DD (폰 시간 기준) */
 function todayStr() {
   const d = new Date();
@@ -139,7 +126,7 @@ function todayStr() {
 
 /** @returns {{rates:object|null, manual:object}} */
 function ctx() {
-  return { rates, manual: { ...state.manual, travlog: travlogActive() ? state.travlog.rates : {} } };
+  return { rates, manual: { ...state.manual, travlog: {} } };
 }
 let lastMetaSig = JSON.stringify(metaOf(state));
 function persist() {
@@ -398,12 +385,12 @@ function shortTime(iso) {
  * @param {string} selected
  * @returns {string}
  */
-function currencyOptions(selected) {
+function currencyOptions(selected, short = false) {
   const fav = state.favorites.filter((c) => currencyInfo(c));
   const rest = CURRENCIES.filter((c) => !fav.includes(c.code)).sort((a, b) => a.name.localeCompare(b.name, 'ko'));
   const opt = (code) => {
     const i = currencyInfo(code);
-    return `<option value="${esc(code)}" ${code === selected ? 'selected' : ''}>${esc(i.name)} (${esc(code)})</option>`;
+    return `<option value="${esc(code)}" ${code === selected ? 'selected' : ''}>${esc(i.name)}${short ? '' : ` (${esc(code)})`}</option>`;
   };
   return `<optgroup label="즐겨찾기">${fav.map(opt).join('')}</optgroup><optgroup label="전체">${rest.map((c) => opt(c.code)).join('')}</optgroup>`;
 }
@@ -479,8 +466,7 @@ function renderFx() {
     const per = (c) => { const r = krwPerUnit(c, ctx()); const u = r.unit > 1 ? r.unit : 1; return `${u} ${c} = ${fmt(r.rate * u, r.rate * u < 10 ? 3 : 2)}원`; };
     const crossLabel = (c) => (state.manual.usdCross?.[c] > 0 ? '고정' : '자동');
     const usdAmt = krw / usd.rate;
-    const tvUsd = krwPerUnit('USD', ctx()).source === 'travlog';
-    if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b> · ${src.source === 'travlog' || (src.source === 'manual-cross' && tvUsd) ? `<span class="ok">트래블로그 앱 값 (${esc((state.travlog.at || '').slice(5))} 입력)</span>` : badgeHtml()}`);
+    if (code !== 'KRW') lines.push(`<b>${esc(per(code))}</b> · ${badgeHtml()}`);
     if (unsupported(code)) {
       // 미지원 통화는 USD 지갑에서 빠짐: 교차 → USD 금액 → 원화, 단계마다 한 줄
       lines.push(`${fmt(crossOf(code) || 0, 2)} ${esc(code)} = USD 1 (${crossLabel(code)}) · USD 지갑에서 결제`);
@@ -663,8 +649,6 @@ async function importFromText(text) {
     if (!state.manual[kind]) continue;
     for (const [code, v] of Object.entries(map)) if (!(state.manual[kind][code] > 0) && v > 0) state.manual[kind][code] = v;
   }
-  // 트래블로그 앱 환율: 내 폰에 없을 때만
-  if (p.travlog?.rates && p.travlog.at && !Object.keys(state.travlog.rates).length) state.travlog = { rates: { ...p.travlog.rates }, at: p.travlog.at };
   let trip = state.trips.find((t) => t.name === tripName);
   if (!trip) {
     // 비어 있는 기본 여행('여행 1')이 있으면 새로 만들지 않고 그 자리를 씀
@@ -705,7 +689,6 @@ function buildShareLink() {
     v: 1, trip: { name: trip.name, code: trip.code }, people: [...state.people],
     ...(state.sync.code ? { room: state.sync.code } : {}),
     manual: { usdCross: { ...state.manual.usdCross } },
-    ...(travlogActive() ? { travlog: { rates: { ...state.travlog.rates }, at: state.travlog.at } } : {}),
     cash: state.cash.map((c) => ({ p: pi(c.person), c: c.code, a: c.amount, ...(c.note ? { n: c.note } : {}) })),
     items: [...trip.items].sort((a, b) => a.ts - b.ts).map((it) => ({
       p: pi(it.payer), d: it.desc || '', a: it.amount, c: it.code,
@@ -984,11 +967,16 @@ function saveDraft() {
     const it = trip.items.find((x) => x.id === editingId);
     if (!it) { editingId = null; return; }
     const changed = it.amount !== amount || it.code !== draft.code;
+    const prevCode = it.code;
     Object.assign(it, { payer: draft.payer, desc: draft.desc.trim(), amount, code: draft.code });
     if (draft.forWho) it.forWho = draft.forWho; else delete it.forWho;
     if (draft.pay) it.pay = draft.pay; else delete it.pay;
     if (draft.cat) it.cat = draft.cat; else delete it.cat;
-    if (changed) Object.assign(it, { krw: Math.round(amount * r.rate), rate: r.rate, source: r.source });
+    if (changed) {
+      // 통화가 그대로면 입력했던 때의 환율을 유지(나중에 환율이 바뀌어도 정산은 그때 값)
+      const keep = it.code === prevCode && Number.isFinite(it.rate) && it.rate > 0;
+      Object.assign(it, { krw: Math.round(amount * (keep ? it.rate : r.rate)), rate: keep ? it.rate : r.rate, source: keep ? it.source : r.source });
+    }
     // 날짜만 바꾸고 시각은 유지(원화 환산은 저장 때 환율 그대로)
     if (draft.date && (!Number.isFinite(it.ts) || draft.date !== localDay(it.ts))) it.ts = withDay(Number.isFinite(it.ts) ? it.ts : Date.now(), draft.date);
     touch(it);
@@ -1012,36 +1000,6 @@ function saveDraft() {
 /* ───────────── 설정 탭 ───────────── */
 
 /**
- * 트래블로그 앱 환율 입력 행. USD·CAD·EUR·JPY + 여행 통화·즐겨찾기 중 트래블로그 지원 통화.
- * @returns {string}
- */
-function travlogRows() {
-  const codes = [...new Set(['USD', 'CAD', 'EUR', 'JPY', activeTrip().code, ...state.favorites])]
-    .filter((c) => c !== 'KRW' && currencyInfo(c) && currencyInfo(c).travlog !== 'none');
-  return codes.map((c) => {
-    const unit = currencyInfo(c).unit || 1;
-    let posted = '';
-    try {
-      const q = rates?.rates?.[c];
-      if (q) posted = `고시 ${fmt(q.mid, 2)}`;
-    } catch { posted = ''; }
-    const v = state.travlog.rates[c];
-    const diff = v && rates?.rates?.[c] ? v * unit - rates.rates[c].mid : null;
-    return `<div class="row"><label style="flex:0 0 96px">${esc(c)} ${unit > 1 ? unit : 1} =</label><input data-action="travlog-val" data-code="${esc(c)}" value="${v ? esc(fmt(v * unit, 2).replace(/,/g, '')) : ''}" inputmode="decimal" placeholder="${esc(posted.replace('고시 ', '').replace(/,/g, ''))}" autocomplete="off"><span class="muted" style="flex:0 0 118px;font-size:.78rem;text-align:right">${esc(posted)}${diff !== null ? `<br>${diff >= 0 ? '+' : ''}${fmt(diff, 2)}` : ''}</span></div>`;
-  }).join('');
-}
-
-/** @returns {string} */
-function travlogStatus() {
-  const t = state.travlog;
-  if (!t.at || !Object.keys(t.rates).length) return '아직 없음. 하나머니 앱 → 하나머니 탭에서 보이는 환율을 넣을 것.';
-  if (travlogActive()) return `${esc(t.at)} 입력값 사용 중. 고시일 ${esc(rates?.baseDate || '—')} 보다 새 고시가 나오면 자동 해제.`;
-  return `<span class="warn">${esc(t.at)} 입력값은 만료됨(고시일 ${esc(rates?.baseDate || '—')} 이 더 새로움). 다시 보고 넣을 것.</span>`;
-}
-
-/* ───────────── 아래에서 올라오는 창(통화 찾기·차트) ───────────── */
-
-/**
  * 검색 결과 줄. 누르면 그 통화로 환율 탭을 열고 버튼 줄에 추가.
  * @param {string} q
  * @returns {string}
@@ -1059,6 +1017,29 @@ function curResults(q) {
 function curMine() {
   if (!state.favorites.length) return '<p class="hint">없음. 위에서 찾아 추가.</p>';
   return state.favorites.map((c) => `<div class="cur-row"><span class="code">${esc(c)}</span><span class="nm">${esc(countryOf(c)?.flag || '')} ${esc(currencyInfo(c).name)}</span><button class="del" data-action="cur-del" data-code="${esc(c)}" aria-label="${esc(c)} 빼기">✕ 빼기</button></div>`).join('');
+}
+
+let favQ = '';
+
+/**
+ * 설정 탭 즐겨찾기 검색 결과. 줄마다 추가/빼기 버튼.
+ * @param {string} q
+ * @returns {string}
+ */
+function favResults(q) {
+  if (!q.trim()) return '';
+  const list = searchCurrencies(q, 15).filter((c) => c.code !== 'KRW');
+  if (!list.length) return '<p class="hint">못 찾음</p>';
+  return list.map((c) => { const on = state.favorites.includes(c.code); return `<div class="cur-row"><span class="code">${esc(c.code)}</span><span class="nm">${esc(countryOf(c.code)?.flag || '')} ${esc(c.name)}</span>
+    <button class="btn sm ${on ? '' : 'primary'}" data-action="fav-toggle" data-code="${esc(c.code)}">${on ? '빼기' : '추가'}</button></div>`; }).join('');
+}
+
+/** 설정 탭 즐겨찾기 줄만 다시 그림(입력 중 글자·키보드 유지) */
+function updateFavUi() {
+  const r = document.getElementById('fav-results');
+  const m = document.getElementById('fav-mine');
+  if (r) r.innerHTML = favResults(favQ);
+  if (m) m.innerHTML = curMine();
 }
 
 /** 검색어 칠 때·뺄 때는 창 전체를 다시 그리지 않음(입력 중 글자·키보드 유지) */
@@ -1312,11 +1293,9 @@ function updateManualForm(what) {
 
 /** @returns {string} */
 function renderSettings() {
-  const payOpt = (t) => [['cash', '결제 기본: 현금'], ['card', '결제 기본: 카드']]
+  const payOpt = (t) => [['cash', '현금'], ['card', '카드']]
     .map(([v, l]) => `<option value="${v}" ${(t.pay === 'card' ? 'card' : 'cash') === v ? 'selected' : ''}>${l}</option>`).join('');
-  const trips = state.trips.map((t) => `<div class="trip-set"><div class="row"><input data-action="trip-name" data-id="${esc(t.id)}" value="${esc(t.name)}"><button class="btn sm danger" data-action="trip-delete" data-id="${esc(t.id)}">삭제</button></div>
-    <div class="row"><select data-action="trip-code" data-id="${esc(t.id)}">${currencyOptions(t.code)}</select><select data-action="trip-pay" data-id="${esc(t.id)}">${payOpt(t)}</select></div></div>`).join('');
-  const favChips = CURRENCIES.filter((c) => c.code !== 'KRW').map((c) => `<button class="chip ${state.favorites.includes(c.code) ? 'on' : ''}" data-action="fav-toggle" data-code="${esc(c.code)}">${esc(c.code)}</button>`).join('');
+  const trips = state.trips.map((t) => `<div class="row trip-set"><input data-action="trip-name" data-id="${esc(t.id)}" value="${esc(t.name)}" style="flex:1 1 0;min-width:0;padding:10px 8px"><select data-action="trip-code" data-id="${esc(t.id)}" style="flex:0 0 36%;padding:10px 4px 10px 8px">${currencyOptions(t.code, true)}</select><select data-action="trip-pay" data-id="${esc(t.id)}" style="flex:0 0 19%;padding:10px 4px 10px 8px">${payOpt(t)}</select><button class="btn sm danger" data-action="trip-delete" data-id="${esc(t.id)}">삭제</button></div>`).join('');
   const manualRows = [
     ...Object.entries(state.manual.krw).map(([c, v]) => { const u = unitOf(c); return `<div class="kv"><span>${u} ${esc(c)} = 한화 ${fmt(v * u, 2)}원</span><button class="del" data-action="manual-del" data-kind="krw" data-code="${esc(c)}">삭제</button></div>`; }),
     ...Object.entries(state.manual.usdCross).map(([c, v]) => `<div class="kv"><span>${trimNum(v, 4)} ${esc(c)} = USD 1달러</span><button class="del" data-action="manual-del" data-kind="usdCross" data-code="${esc(c)}">삭제</button></div>`),
@@ -1338,19 +1317,10 @@ function renderSettings() {
 
   return `
   <section class="card"><h2>여행</h2>${trips}<div class="actions"><button class="btn" data-action="trip-new">새 여행</button></div></section>
-  <section class="card"><h2>즐겨찾기 통화</h2><div class="chips" style="flex-wrap:wrap;overflow:visible">${favChips}</div></section>
-  <section class="card"><h2>트래블로그 앱 환율 맞추기</h2>
-    <p class="hint" style="margin:0 0 6px">하나머니 화면의 "USD 1 = 1,359원" 값을 그대로 넣으면 앱 전체(정산 내역 포함)가 그 환율로 계산됨. 더 새 고시가 나오면 자동으로 해제.</p>
-    ${travlogRows()}
-    <div class="actions"><button class="btn primary" data-action="travlog-save">저장</button>${Object.keys(state.travlog.rates).length ? '<button class="btn sm" data-action="travlog-clear">지우기</button>' : ''}</div>
-    <div class="muted" style="margin-top:6px">${travlogStatus()}</div></section>
-  <section class="card"><h2>수동 환율 (항상 우선)</h2>${manualRows}
-    <div class="row" style="margin-top:8px"><select id="m-code" data-action="manual-code">${currencyOptions(fx.code)}</select></div>
-    <div class="row"><select id="m-kind" data-action="manual-kind">${manualKindOptions(fx.code, manualDefaultKind(fx.code))}</select></div>
-    <div class="row"><input id="m-val" data-action="manual-val" inputmode="decimal" placeholder="${esc(manualPlaceholder(fx.code, manualDefaultKind(fx.code)))}" autocomplete="off"></div>
-    <div id="m-preview" class="muted" style="min-height:1.3em">${esc(manualPreviewText(fx.code, manualDefaultKind(fx.code), 0))}</div>
-    <div class="actions"><button class="btn primary" data-action="manual-add">수동 환율 저장</button></div>
-    <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "9.2 MAD = USD 1달러", 멕시코 "1 MXN = 한화 72원".</p></section>
+  <section class="card"><h2>즐겨찾기 통화</h2>
+    <input id="fav-q" data-action="fav-q" value="${esc(favQ)}" placeholder="나라·통화·도시 (예: 멕시코, 페소, 방콕)" autocomplete="off" enterkeyhint="search">
+    <div id="fav-results">${favResults(favQ)}</div>
+    <div id="fav-mine">${curMine()}</div></section>
   <section class="card"><h2>같이 쓰기 (두 폰 동기화)</h2>
     ${state.sync.code ? `
     <div class="line" style="display:flex;justify-content:space-between;align-items:center"><span>방 코드</span><span><b style="font-size:1.3rem;letter-spacing:.12em">${esc(fmtRoomCode(state.sync.code))}</b></span></div>
@@ -1371,16 +1341,13 @@ function renderSettings() {
     <div class="muted">마지막 갱신 ${lastRefreshAt ? esc(shortTime(new Date(lastRefreshAt).toISOString())) : '아직 없음'} · 앱을 열 때·화면에 돌아올 때·30분마다 자동 갱신</div>
     <div class="actions"><button class="btn primary" data-action="rates-refresh">환율 새로고침</button></div>
     <p class="hint">하나은행 고시환율(매매기준율 = 트래블로그 충전가)을 FXCOD 공개 JSON 에서 받음(영업일 하루 3번쯤 갱신). 하나은행에 없는 통화(모로코 디르함 등)는 er-api 의 USD 교차환율, 없거나 오래되면 er-api·ECB 로 대체. 트래블로그 앱에 찍힌 실제 환율과 다르면 위 수동 환율에 넣을 것.</p></section>
-  <section class="card"><h2>환급 손실 계산</h2>
-    <div class="row"><input id="rf-amt" inputmode="decimal" placeholder="남은 외화"><select id="rf-code" style="flex:0 0 46%">${currencyOptions('JPY')}</select></div>
-    <div class="actions"><button class="btn" data-action="refund-calc">계산</button></div>
-    <div id="rf-out" class="muted"></div>
-    <div class="row" style="margin-top:8px"><label>환급 수수료 %</label><input data-action="set-fee" value="${esc(state.settings.refundFeePct)}" inputmode="decimal"></div>
-    <div class="row"><label>오래됨 기준(시간)</label><input data-action="set-stale" value="${esc(state.settings.staleHours)}" inputmode="numeric"></div>
-</section>
-  <section class="card"><h2>홈 화면에 앱으로 설치</h2>
-    ${installEvt ? '<div class="actions"><button class="btn primary" data-action="install">홈 화면에 추가</button></div>' : '<p class="muted">크롬 메뉴(⋮) → "홈 화면에 추가" 또는 "앱 설치". 이미 설치했으면 이 안내는 무시.</p>'}
-  </section>
+  <section class="card"><h2>수동 환율 (항상 우선)</h2>${manualRows}
+    <div class="row" style="margin-top:8px"><select id="m-code" data-action="manual-code">${currencyOptions(fx.code)}</select></div>
+    <div class="row"><select id="m-kind" data-action="manual-kind">${manualKindOptions(fx.code, manualDefaultKind(fx.code))}</select></div>
+    <div class="row"><input id="m-val" data-action="manual-val" inputmode="decimal" placeholder="${esc(manualPlaceholder(fx.code, manualDefaultKind(fx.code)))}" autocomplete="off"></div>
+    <div id="m-preview" class="muted" style="min-height:1.3em">${esc(manualPreviewText(fx.code, manualDefaultKind(fx.code), 0))}</div>
+    <div class="actions"><button class="btn primary" data-action="manual-add">수동 환율 저장</button></div>
+    <p class="hint">트래블로그 결제 내역에 찍힌 실제 환율을 넣으면 그 값으로 계산. 예: 모로코 "9.2 MAD = USD 1달러", 멕시코 "1 MXN = 한화 72원".</p></section>
   <section class="card"><h2>데이터</h2>
     <div class="actions"><button class="btn" data-action="export">내보내기(JSON)</button><button class="btn" data-action="import">가져오기</button></div>
     <input id="import-file" type="file" accept="application/json" style="display:none" data-action="import-file">
@@ -1650,7 +1617,7 @@ async function onClick(el) {
     case 'fav-toggle': {
       const c = d.code;
       state.favorites = state.favorites.includes(c) ? state.favorites.filter((x) => x !== c) : [...state.favorites, c];
-      persist(); render(); break;
+      persist(); updateFavUi(); break;
     }
     case 'manual-add': {
       const code = /** @type {HTMLSelectElement} */ (document.getElementById('m-code')).value;
@@ -1661,55 +1628,12 @@ async function onClick(el) {
       const n = resnapshotItems(code);
       persist(); render(); toast(`${code} 수동 환율 저장${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
     }
-    case 'travlog-save': {
-      const inputs = [...document.querySelectorAll('[data-action="travlog-val"]')];
-      const next = {};
-      for (const inp of inputs) {
-        const code = /** @type {HTMLInputElement} */ (inp).dataset.code;
-        const v = parseAmount(/** @type {HTMLInputElement} */ (inp).value);
-        if (v > 0) next[code] = v / (currencyInfo(code).unit || 1);
-      }
-      if (!Object.keys(next).length) { toast('값을 하나 이상 넣어 줘'); return; }
-      state.travlog = { rates: next, at: todayStr() };
-      let n = 0;
-      const codes = new Set(Object.keys(next));
-      // USD 가 바뀌면 USD 교차로 계산되는 통화(MAD 등)도 같이
-      if (codes.has('USD')) for (const t of state.trips) for (const it of t.items) if (it.source === 'cross' || it.source === 'manual-cross') codes.add(it.code);
-      for (const c of codes) n += resnapshotItems(c);
-      persist(); render(); toast(`트래블로그 환율 저장${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
-    }
-    case 'travlog-clear': {
-      const codes = new Set(Object.keys(state.travlog.rates));
-      for (const t of state.trips) for (const it of t.items) if (it.source === 'travlog' || it.source === 'cross' || it.source === 'manual-cross') codes.add(it.code);
-      state.travlog = { rates: {}, at: null };
-      let n = 0;
-      for (const c of codes) n += resnapshotItems(c);
-      persist(); render(); toast(`지움${n ? ` · 내역 ${n}건 다시 계산` : ''}`); break;
-    }
     case 'manual-del': {
       delete state.manual[d.kind][d.code];
       const n = resnapshotItems(d.code);
       persist(); render(); if (n) toast(`내역 ${n}건 다시 계산`); break;
     }
     case 'rates-refresh': await refreshRates(); break;
-    case 'install': {
-      if (!installEvt) return;
-      installEvt.prompt();
-      const r = await installEvt.userChoice.catch(() => null);
-      logger.info('install', r);
-      installEvt = null; render(); break;
-    }
-    case 'refund-calc': {
-      const amt = parseAmount(/** @type {HTMLInputElement} */ (document.getElementById('rf-amt')).value);
-      const code = /** @type {HTMLSelectElement} */ (document.getElementById('rf-code')).value;
-      const out = document.getElementById('rf-out');
-      if (!out) return;
-      try {
-        const r = refundLoss(amt, code, ctx(), { feePct: state.settings.refundFeePct });
-        out.innerHTML = `충전가 기준 ${fmt(r.midKrw)}원 → 환급 ${fmt(r.refundKrw)}원. 손실 <b class="warn">${fmt(r.lossKrw)}원</b> (스프레드 ${fmt(r.spreadKrw)} + 수수료 ${fmt(r.feeKrw)})`;
-      } catch (e) { out.innerHTML = `<span class="err">${esc(e.message)}</span>`; }
-      break;
-    }
     case 'export': {
       const blob = new Blob([exportJson(state)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -1781,6 +1705,7 @@ function onInput(el) {
     case 'manual-code': updateManualForm('code'); break;
     case 'manual-kind': updateManualForm('kind'); break;
     case 'manual-val': updateManualForm('val'); break;
+    case 'fav-q': favQ = el.value; updateFavUi(); break;
     case 'trip-pay': {
       const t = state.trips.find((x) => x.id === d.id);
       if (!t) break;
@@ -1795,7 +1720,6 @@ function onInput(el) {
       followTripCurrency(prev);
       persist(); break;
     }
-    case 'set-fee': { const v = parseAmount(el.value); if (v >= 0) { state.settings.refundFeePct = v; persist(); } break; }
     case 'set-stale': { const v = parseAmount(el.value); if (v > 0) { state.settings.staleHours = v; persist(); } break; }
     case 'import-file': {
       const f = /** @type {HTMLInputElement} */ (el).files?.[0];
@@ -1849,11 +1773,6 @@ tabs.addEventListener('click', (e) => {
 
 /* ───────────── 시작 ───────────── */
 
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  installEvt = e;
-  if (state.ui.tab === 'settings') render();
-});
 if (!draft.code) draft.code = activeTrip().code;
 render();
 refreshRates({ silent: true }).then(() => applyHashImport()).then(() => syncNow({ quiet: true })).catch((e) => logger.error('환율 로딩 실패', e));
