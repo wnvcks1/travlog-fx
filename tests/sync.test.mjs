@@ -105,3 +105,12 @@ test('여행 기본 결제(pay)도 메타로 오가고, 옛 앱 메타(pay 없�
   applyRemote(s, { meta_rev: 40, meta: { ...metaOf(s), trips: [{ id: 'trip1', name: '중국', code: 'CNY', pay: 'card' }] }, items: [] });
   assert.equal(s.trips[0].pay, 'card');
 });
+
+test('applyRemote: 상대 메타에 없는 여행은 지움(일본 여행이 한 폰에 남던 문제), 그 여행 내역은 되살리지 않음', () => {
+  const s = mk();
+  s.trips.push({ id: 'jp', name: '일본', code: 'JPY', items: [] });
+  const r = applyRemote(s, { meta_rev: 50, meta: { ...metaOf(s), trips: [{ id: 'trip1', name: '모로코', code: 'MAD' }] },
+    items: [{ id: 'jx', data: { trip: 'jp', payer: '으뜸이', desc: 'x', amount: 1, code: 'JPY' }, rev: 10, deleted: false }] });
+  assert.deepEqual(s.trips.map((t) => t.id), ['trip1']);
+  assert.equal(r.added, 0);
+});

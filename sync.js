@@ -112,6 +112,7 @@ export function buildPush(state, opts = {}) {
 export function applyRemote(state, remote) {
   const out = { added: 0, updated: 0, removed: 0, metaApplied: false };
   const rMeta = remote?.meta;
+  const goneTrips = new Set();
   if (rMeta && Number.isFinite(remote.meta_rev) && remote.meta_rev > (state.sync.metaRev || 0) && Array.isArray(rMeta.people)) {
     if (rMeta.people.length >= 2) state.people = [...rMeta.people];
     if (Array.isArray(rMeta.initials) && rMeta.initials.length === state.people.length) state.initials = [...rMeta.initials];
@@ -121,6 +122,12 @@ export function applyRemote(state, remote) {
       if (lt) { lt.name = rt.name; lt.code = rt.code; } else { lt = { id: rt.id, name: rt.name, code: rt.code, items: [] }; state.trips.push(lt); }
       // 옛 앱이 보낸 메타엔 pay 가 없음 → 이 폰 값 유지
       if ('pay' in rt) { if (rt.pay === 'cash' || rt.pay === 'card') lt.pay = rt.pay; else delete lt.pay; }
+    }
+    // 메타는 통째로 이기는 규칙이므로 상대 목록에 없는 여행은 지운 것(하나는 남김)
+    if (Array.isArray(rMeta.trips) && rMeta.trips.length) {
+      const keep = new Set(rMeta.trips.map((t) => t.id));
+      for (const t of state.trips) if (!keep.has(t.id)) goneTrips.add(t.id);
+      state.trips = state.trips.filter((t) => keep.has(t.id));
     }
     if (Array.isArray(rMeta.cash)) state.cash = rMeta.cash.map((c) => ({ ...c }));
     if (rMeta.manual) state.manual = { krw: { ...(rMeta.manual.krw || {}) }, usdCross: { ...(rMeta.manual.usdCross || {}) } };
@@ -143,6 +150,7 @@ export function applyRemote(state, remote) {
     }
     const data = r.data && typeof r.data === 'object' ? r.data : {};
     const { trip: tripId, ...fields } = data;
+    if (goneTrips.has(tripId)) continue;
     if (!loc) {
       // 로컬에서 지운 기록이 더 새로우면 되살리지 않음
       const tb = (state.tombstones || []).find((x) => x.id === r.id);

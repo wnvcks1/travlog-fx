@@ -817,15 +817,13 @@ function renderSettle() {
   let summary;
   try {
     const s = settle(trip.items, state.people, ctx(), state.ratio);
-    const lines = state.people.map((p) => `<div class="line"><span>${esc(p)} 낸 돈</span><span>${fmt(s.paid[p])}원 <small class="muted">${cadOf(s.paid[p])} 캐달</small></span></div>`).join('');
-    const ratioTxt = state.ratio.every((r) => r === state.ratio[0]) ? '균등' : state.ratio.join(':');
-    const share = state.people.map((p) => `${esc(p)} ${fmt(s.share[p])}원${s.personal[p] ? ` <small class="muted">(개인 ${fmt(s.personal[p])})</small>` : ''}`).join(' · ');
+    // 쓴 돈 = 같이 쓴 몫 + 개인 지출
+    const lines = state.people.map((p) => `<div class="line"><span>${esc(p)} 쓴 돈</span><span>${fmt(s.share[p])}원 <small class="muted">${s.personal[p] ? `같이 ${fmt(s.share[p] - s.personal[p])} + 개인 ${fmt(s.personal[p])} · ` : ''}${cadOf(s.share[p])} 캐달</small></span></div>`).join('');
     const xfer = s.transfers.length
       ? s.transfers.map((t) => `<div class="xfer">${esc(t.from)} → ${esc(t.to)} ${fmt(t.krw)}원 <small>(${t.cad === null ? '—' : fmt(t.cad, 1)} 캐달)</small></div>`).join('')
       : '<div class="xfer ok">정산 끝. 주고받을 돈 없음</div>';
     summary = `<div class="summary">${lines}
       <div class="line total"><span>합계</span><span>${fmt(s.total)}원 <small class="muted">${cadOf(s.total)} 캐달</small></span></div>
-      <div class="line"><span>분담(${esc(ratioTxt)})</span><span>${share}</span></div>
       ${xfer}
       <div class="actions"><button class="btn" data-action="settle-copy">텍스트 복사</button><button class="btn" data-action="settle-share">공유 링크</button></div>
     </div>`;
@@ -929,12 +927,23 @@ function renderDedupe(trip) {
 }
 
 /**
+ * 이 여행에 보일 현금 지갑·넣은 돈. 여행 통화이거나 이 여행 내역에서 현금으로 쓴 통화만(다른 나라 지갑은 숨김).
+ * @param {object} trip
+ * @returns {{bal:Array<object>, cash:Array<object>}}
+ */
+function tripCash(trip) {
+  const all = cashBalances(trip.items, state.cash, trip);
+  const codes = new Set([trip.code, ...all.filter((w) => w.spent > 0).map((w) => w.code)]);
+  return { bal: all.filter((w) => codes.has(w.code)), cash: state.cash.filter((c) => codes.has(c.code)) };
+}
+
+/**
  * 현금 지갑 카드. 사람·통화별 환전 − 현금 사용 = 남은 현금, 넣은 돈 목록과 추가 폼.
  * @param {object} trip
  * @returns {string}
  */
 function renderCash(trip) {
-  const bal = cashBalances(trip.items, state.cash, trip);
+  const { bal, cash } = tripCash(trip);
   const krwOf = (amt, code) => { try { return `${fmt(amt * krwPerUnit(code, ctx()).rate)}원`; } catch { return ''; } };
   // 현금은 정수면 소수점 없이, 아니면 두 자리
   const cf = (x) => fmt(x, Number.isInteger(Math.round(x * 100) / 100) ? 0 : 2);
@@ -948,7 +957,7 @@ function renderCash(trip) {
     return `<div class="line"><span>${esc(w.person)} ${esc(w.code)} 남은 현금</span><span class="${cls}"><b>${cf(w.remaining)} ${esc(w.code)}</b> <small class="muted">${esc(krwOf(w.remaining, w.code))}</small></span></div>
       <div class="line formula"><span class="muted">넣은 돈 ${cf(w.topup)} − 현금 사용 ${cf(w.spent)} = <b class="${cls}">남은 ${cf(w.remaining)} ${esc(w.code)}</b></span></div>`;
   }).join('') || '<div class="empty">아직 없음. 환전한 현금을 아래에 넣으면 정산 내역 중 현금 결제분이 빠져나간 잔액이 보임.</div>';
-  const list = state.cash.map((c) => `<div class="kv"><span>${esc(c.person)} · ${cf(c.amount)} ${esc(c.code)}${c.note ? ` · ${esc(c.note)}` : ''}</span><button class="del" data-action="cash-del" data-id="${esc(c.id)}">삭제</button></div>`).join('');
+  const list = cash.map((c) => `<div class="kv"><span>${esc(c.person)} · ${cf(c.amount)} ${esc(c.code)}${c.note ? ` · ${esc(c.note)}` : ''}</span><button class="del" data-action="cash-del" data-id="${esc(c.id)}">삭제</button></div>`).join('');
   const personSel = `<select id="c-person" style="flex:0 0 30%">${state.people.map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}</select>`;
   return `<section class="card cash"><h2>현금 지갑</h2>${rows}
     <div class="hint" style="margin:6px 0">${list ? '넣은 돈:' : ''}</div>${list}
@@ -968,8 +977,8 @@ function summaryText() {
   const s = settle(trip.items, state.people, ctx(), state.ratio);
   const cadTxt = (krw) => { const c = cadOf(krw); return c === '—' ? '' : ` (C$${c})`; };
   const out = [`[${trip.name} 정산] ${new Date().toISOString().slice(0, 10)} 기준, ${trip.items.length}건`];
-  for (const p of state.people) out.push(`${p} 낸 돈 ${fmt(s.paid[p])}원${cadTxt(s.paid[p])}`);
-  out.push(`합계 ${fmt(s.total)}원${cadTxt(s.total)} · 분담 ${state.people.map((p) => `${p} ${fmt(s.share[p])}원`).join(', ')}`);
+  for (const p of state.people) out.push(`${p} 쓴 돈 ${fmt(s.share[p])}원${s.personal[p] ? ` (같이 ${fmt(s.share[p] - s.personal[p])} + 개인 ${fmt(s.personal[p])})` : ''}${cadTxt(s.share[p])}`);
+  out.push(`합계 ${fmt(s.total)}원${cadTxt(s.total)}`);
   const cats = categoryTotals(trip.items, (i) => itemKrw(i, ctx()));
   if (cats.length) out.push(`분류: ${cats.map((c) => `${c.name} ${fmt(c.krw)}원(${Math.round(c.pct)}%)`).join(' · ')}`);
   for (const t of s.transfers) out.push(`→ ${t.from}이(가) ${t.to}에게 ${fmt(t.krw)}원${t.cad === null ? '' : ` (C$${fmt(t.cad, 1)})`}`);
@@ -978,7 +987,7 @@ function summaryText() {
   const rl = codes.map((c) => { try { const r = krwPerUnit(c, ctx()); return `1 ${c}=${fmt(r.rate, r.rate < 10 ? 3 : 2)}원(${sourceLabel(r.source)})`; } catch { return `${c} 환율 없음`; } });
   try { const r = krwPerUnit('CAD', ctx()); rl.push(`1 CAD=${fmt(r.rate, 1)}원`); } catch { /* CAD 없으면 생략 */ }
   if (rl.length) out.push(`환율: ${rl.join(', ')}`);
-  for (const w of cashBalances(trip.items, state.cash, trip)) if (w.hasWallet) out.push(`현금 ${w.person} ${w.code}: 넣은 돈 ${fmt(w.topup, 2)} − 사용 ${fmt(w.spent, 2)} = 남은 ${fmt(w.remaining, 2)}`);
+  for (const w of tripCash(trip).bal) if (w.hasWallet) out.push(`현금 ${w.person} ${w.code}: 넣은 돈 ${fmt(w.topup, 2)} − 사용 ${fmt(w.spent, 2)} = 남은 ${fmt(w.remaining, 2)}`);
   out.push('', ...[...trip.items].sort((a, b) => a.ts - b.ts).map((i) => `${i.payer} ${i.desc || '-'} ${ledgerAmount(i.amount, i.code)} ${i.code} = ${fmt(i.krw)}원${i.forWho ? ` (${i.forWho} 개인)` : ''}${payMethod(i, trip) === 'card' ? ' [카드]' : ''}`));
   return out.join('\n');
 }
@@ -1688,6 +1697,7 @@ async function onClick(el) {
       if (state.trips.length === 1) { toast('여행은 하나는 있어야 함'); return; }
       if (!window.confirm(`"${t.name}" 와 내역 ${t.items.length}건을 지울까?`)) return;
       state.trips = state.trips.filter((x) => x.id !== d.id);
+      if (state.sync.code) for (const it of t.items) state.tombstones.push({ id: it.id, rev: Date.now() });
       if (state.activeTrip === d.id) state.activeTrip = state.trips[0].id;
       persist(); render(); break;
     }
